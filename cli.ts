@@ -6,6 +6,7 @@
  */
 
 import { init, formatInitResult } from "./src/init.ts";
+import { newSpec, isNewSpecError } from "./src/new.ts";
 import { requireProjectRoot } from "./src/root.ts";
 
 const args = Deno.args;
@@ -16,6 +17,7 @@ if (!command || command === "--help" || command === "-h") {
 
 Commands:
   init        Initialize SpecMan in the current directory
+  new         Create a new spec scaffold
   
 Run 'specman <command> --help' for details.`);
   Deno.exit(0);
@@ -33,6 +35,38 @@ switch (command) {
       }
     }
     Deno.exit(exitCode);
+  }
+
+  case "new": {
+    const root = requireProjectRoot(Deno.cwd());
+    // Parse args: specman new "<title>" [--group <name>] [--id FEAT-NNNN]
+    const newArgs = args.slice(1);
+    let title: string | undefined;
+    let group: string | undefined;
+    let id: string | undefined;
+
+    for (let i = 0; i < newArgs.length; i++) {
+      if (newArgs[i] === "--group" && i + 1 < newArgs.length) {
+        group = newArgs[++i];
+      } else if (newArgs[i] === "--id" && i + 1 < newArgs.length) {
+        id = newArgs[++i];
+      } else if (!title) {
+        title = newArgs[i];
+      }
+    }
+
+    if (!title) {
+      console.error('error: missing title. Usage: specman new "<title>" [--group <name>] [--id FEAT-NNNN]');
+      Deno.exit(1);
+    }
+
+    const result = newSpec({ title, projectRoot: root, group, id });
+    if (isNewSpecError(result)) {
+      console.error(`error: ${result.reason}`);
+      Deno.exit(1);
+    }
+    console.log(result.path);
+    Deno.exit(0);
   }
 
   default: {
