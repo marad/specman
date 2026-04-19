@@ -143,5 +143,5 @@ note: commits historically tagged 'Spec: FEAT-0042/...' will not be scoped by sy
 ## Open questions
 
 - Should `specman delete` accept multiple ids in one invocation (`specman delete FEAT-0042 FEAT-0043`)? *Defer — trivially additive later; single-id-per-call keeps blast radius small until a concrete batch use case surfaces.*
-- Should `specman delete` offer a `--dry-run` that prints what would be removed without touching disk? *Defer — the four tracked paths are predictable enough to inspect by hand; add if a real scripted-deletion workflow wants it.*
+- Should `specman delete` offer a `--dry-run` that prints what would be removed without touching disk? *Closed — yes, `--dry-run` prints the list of tracked paths that would be removed (or are absent) without deleting anything.*
 - Should validate auto-suggest `specman delete <FEAT-ID>` when it finds an orphan snapshot or plan? *Decide if orphan states prove to be a common confusion point; for now validate reports, humans pick the remediation.*

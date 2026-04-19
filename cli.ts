@@ -6,6 +6,7 @@
  */
 
 import { init, formatInitResult } from "./src/init.ts";
+import { deleteSpec, isDeleteError, formatDeleteResult } from "./src/delete.ts";
 import { newSpec, isNewSpecError } from "./src/new.ts";
 import { requireProjectRoot } from "./src/root.ts";
 import {
@@ -34,6 +35,7 @@ Commands:
   new         Create a new spec scaffold
   status      Show drift status of all specs
   validate    Validate specs and snapshots
+  delete      Remove a spec and all its tracked artifacts
   
 Run 'specman <command> --help' for details.`);
   Deno.exit(0);
@@ -164,6 +166,57 @@ switch (command) {
     }
 
     Deno.exit(exitCode(result, valOpts));
+  }
+
+  case "delete": {
+    // Handle --help before requiring project root
+    if (args.slice(1).includes("--help") || args.slice(1).includes("-h")) {
+      console.log(`Usage: specman delete <FEAT-ID> [--dry-run]
+
+Remove a spec and all its tracked artifacts:
+  - spec file (specs/**/<FEAT-ID>-*.md)
+  - snapshot (.specman/implemented/<FEAT-ID>.md)
+  - plan (.specman/plans/<FEAT-ID>.md)
+  - assets folder (specs/assets/<FEAT-ID>/)
+
+Options:
+  --dry-run   Show what would be removed without deleting`);
+      Deno.exit(0);
+    }
+
+    const root = requireProjectRoot(Deno.cwd());
+    const delArgs = args.slice(1);
+    let featId: string | undefined;
+    let dryRun = false;
+
+    for (let i = 0; i < delArgs.length; i++) {
+      if (delArgs[i] === "--dry-run") {
+        dryRun = true;
+      } else if (!featId) {
+        featId = delArgs[i];
+      }
+    }
+
+    if (!featId) {
+      console.error("error: missing FEAT-ID. Usage: specman delete <FEAT-ID> [--dry-run]");
+      Deno.exit(1);
+    }
+
+    const result = deleteSpec(root, featId, { dryRun });
+    if (isDeleteError(result)) {
+      console.error(`error: ${result.reason}`);
+      Deno.exit(1);
+    }
+
+    const lines = formatDeleteResult(result, { dryRun });
+    for (const line of lines) {
+      if (line.startsWith("warning:")) {
+        console.error(line);
+      } else {
+        console.log(line);
+      }
+    }
+    Deno.exit(0);
   }
 
   default: {
