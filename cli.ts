@@ -15,6 +15,13 @@ import {
   formatValidation,
   generateDiff,
 } from "./src/snapshot.ts";
+import {
+  validate,
+  formatHuman,
+  formatJson,
+  exitCode,
+  type ValidateOptions,
+} from "./src/validate.ts";
 
 const args = Deno.args;
 const command = args[0];
@@ -108,19 +115,55 @@ switch (command) {
   }
 
   case "validate": {
-    const root = requireProjectRoot(Deno.cwd());
-    const validation = validateSnapshots(root);
-    const [valLines, hasErrors] = formatValidation(validation);
+    const valArgs = args.slice(1);
+    const valOpts: ValidateOptions = {
+      format: valArgs.includes("--format=json") ? "json" : "human",
+      strict: valArgs.includes("--strict"),
+    };
 
-    if (valLines.length === 0) {
-      console.log("All snapshots valid.");
+    // Check if specs/ exists before requiring full project root
+    const specsExists = (() => {
+      try {
+        return Deno.statSync("specs").isDirectory;
+      } catch {
+        return false;
+      }
+    })();
+
+    if (!specsExists) {
+      // AC-11: no specs/ folder
+      if (valOpts.format === "json") {
+        console.log(JSON.stringify({
+          summary: { specs_checked: 0, errors: 0, warnings: 0 },
+          findings: [],
+          error: "no specs/ directory found",
+        }, null, 2));
+      } else {
+        console.error("error: no specs/ directory found. Run 'specman init' first.");
+      }
+      Deno.exit(2);
+    }
+
+    // Use CWD as project root for validate (it must have specs/)
+    const valRoot = Deno.cwd();
+    const result = validate(valRoot);
+
+    if (result.specsChecked === -1) {
+      // specs/ doesn't exist (shouldn't reach here, but safety)
+      console.error("error: no specs/ directory found. Run 'specman init' first.");
+      Deno.exit(2);
+    }
+
+    if (valOpts.format === "json") {
+      console.log(formatJson(result));
     } else {
-      for (const line of valLines) {
-        console.error(line);
+      const lines = formatHuman(result);
+      for (const line of lines) {
+        console.log(line);
       }
     }
 
-    Deno.exit(hasErrors ? 1 : 0);
+    Deno.exit(exitCode(result, valOpts));
   }
 
   default: {
