@@ -16,7 +16,7 @@ The AC-to-code mapping is derived, never stored. A separately-maintained manifes
 The user invokes `specman sync` (optionally scoped to a single spec id) from within a repo. For each drifted spec in scope, SpecMan:
 
 1. Loads the current spec and its last-implemented snapshot from `.specman/implemented/<FEAT-ID>.md` (FEAT-0003).
-2. Computes the diff, specifically identifying which acceptance criteria were added, removed, or changed.
+2. Computes the diff, specifically identifying which acceptance criteria were added, removed, or changed. If the diff reveals drift but no AC changes — only frontmatter or non-AC body sections changed — sync exits without producing a plan and prints an informational message directing the user to either update the spec's acceptance criteria (if the change has implementation consequences) or run `specman seal <FEAT-ID>` to acknowledge the editorial change.
 3. Derives the candidate scope — the set of code paths historically associated with each changed AC — by running `git log --grep='Spec: <FEAT-ID>/<AC-ID>' --name-only` per affected AC and intersecting with paths that still exist. This scopes the agent's attention; it is a starting point, not authoritative, and the agent may read additional files as needed.
 4. Produces (or resumes) an implementation plan at `.specman/plans/<FEAT-ID>.md` — structured per FEAT-0009, keyed to AC ids. If a prior aborted sync left an uncommitted plan file, SpecMan prompts the user to `resume` (use it as-is) or `regenerate` (overwrite) per FEAT-0009. Otherwise, SpecMan writes a fresh scaffold and the agent populates approach and verification on top.
 5. Presents the plan to the user with three choices — `approve`, `re-plan`, `abort` — per FEAT-0009. Re-plan regenerates the approach treating user edits as constraints and re-presents; the loop has no iteration cap.
@@ -26,9 +26,15 @@ The user invokes `specman sync` (optionally scoped to a single spec id) from wit
 
 A single sync invocation may produce any number of commits. The agent authors commits as it works — typically one per AC or per logical change — with a `Spec: <FEAT-ID>/<AC-ID>` trailer identifying which criterion drove the change. SpecMan itself authors exactly one commit per sync: the **snapshot commit**, which writes `.specman/implemented/<FEAT-ID>.md`. The snapshot commit is always the last commit of the sync, and is only created if verification passes.
 
-This gives atomicity at the state-machine level rather than the git level: a spec is implemented iff its snapshot matches. If a sync aborts partway through, intermediate code commits may exist in history, but without the snapshot commit the spec is still reported as drifted — and a subsequent `specman sync` can resume against the partial state.
+This gives atomicity at the state-machine level rather than the git level: a spec is implemented iff its snapshot matches. If a sync aborts partway through, intermediate code commits may exist in history, but without the snapshot commit the spec is still reported as drifted — and a subsequent `specman sync` can resume against the partial state. On resumed execution, the agent operates against the current codebase, which includes any commits from the prior attempt. The agent is expected to inspect the working state, recognize already-completed work via existing code and `Spec:` trailers, and skip it rather than duplicate it. No structural progress-tracking mechanism exists in the plan; the agent's ability to read the codebase is the resumption strategy.
 
 A brand-new feature (status `new` per FEAT-0003 — no snapshot exists) is treated as a full greenfield implementation: the whole spec is the delta.
+
+### Trailer check
+
+After execution completes and before verification, SpecMan scans every new commit since sync started (the range between the pre-sync HEAD and the current HEAD). Every commit in that range must carry at least one `Spec: <FEAT-ID>/<AC-ID>` trailer whose `<FEAT-ID>` matches the spec being synced. A commit missing a matching trailer fails the sync — no verification commands run, no snapshot commit is created, and the offending commit hash and message are surfaced to the user so the trailer can be added (e.g. via `git commit --amend`) before retrying.
+
+This check makes FEAT-0004 AC-8 enforceable rather than advisory. Without it, an external agent that omits trailers silently degrades future sync scoping — `git log --grep` would miss the untracered commits, producing progressively worse plans.
 
 ### Verification
 
@@ -38,14 +44,22 @@ Verification must not leave the working tree dirty. After each verification comm
 
 Verification operates on the post-execution state — it observes the result of every agent commit produced during the sync. If verification passes, the snapshot commit lands; if it fails, no snapshot commit is created and the sync halts per AC-4.
 
+### Sealing editorial changes
+
+`specman seal <FEAT-ID>` updates the snapshot for a drifted spec without invoking the agent or producing a plan. It is the correct path when drift is purely editorial — frontmatter metadata changes, prose rewording in non-AC sections, or other modifications that do not require code changes.
+
+Seal requires that the spec is `drifted` (not `new` or `in-sync`). It also requires that no acceptance criteria were added, removed, or changed relative to the current snapshot. If the spec has AC-level drift, seal refuses with an error directing the user to `specman sync` instead.
+
+On success, seal writes the snapshot and creates a single commit updating `.specman/implemented/<FEAT-ID>.md`. It does not produce a plan, invoke the agent, or run verification. Seal requires a clean working tree; if uncommitted changes exist, it exits non-zero with an error naming the dirty paths.
+
 ## Constraints
 
 - The snapshot commit is always the final commit of a sync invocation. No code commit may follow the snapshot commit within the same sync.
-- Every agent-authored code commit carries a `Spec: <FEAT-ID>/<AC-ID>` trailer naming at least one AC it addresses. Uncredited commits are a sync bug — the trailer is the sole substrate from which future syncs derive AC-to-code scope, so omissions silently degrade scoping over time.
+- Every agent-authored code commit carries a `Spec: <FEAT-ID>/<AC-ID>` trailer naming at least one AC it addresses. Cross-cutting commits that serve multiple ACs carry multiple trailers (one per AC). Uncredited commits are a sync bug — the trailer is the sole substrate from which future syncs derive AC-to-code scope, so omissions silently degrade scoping over time.
 - The user reviews the plan (FEAT-0009) and must explicitly approve before any code change is committed. `re-plan` and `abort` are also available; approval is the only path to execution.
 - On any failure path — agent error, verification failure, user abort — the snapshot does not advance. Any agent-authored code commits that landed before the failure remain in history with their `Spec:` trailers intact, so a subsequent sync can see the partial work.
 - Only one spec is synced at a time; cross-spec reasoning within a single sync invocation is forbidden (see Non-goals).
-- Sync requires a clean working tree at start, with one exception: an uncommitted `.specman/plans/<target-FEAT-ID>.md` is permitted because it signals a prior aborted sync and triggers the resume flow (FEAT-0009). Any other dirty path causes sync to exit with an error naming the paths before producing a plan or invoking the agent. The exception preserves the verification-dirty-tree check's meaning: every non-plan working-tree change observed during sync was produced by the sync itself.
+- Sync requires a clean working tree at start, with one exception: uncommitted plan files under `.specman/plans/` are permitted when they belong to the sync scope — for single-spec sync only `.specman/plans/<target-FEAT-ID>.md`, for multi-spec sync any `.specman/plans/<ID>.md` where `<ID>` is in the drifted set. An uncommitted plan signals a prior aborted sync and triggers the resume flow (FEAT-0009). Any other dirty path causes sync to exit with an error naming the paths before producing a plan or invoking the agent. The exception preserves the verification-dirty-tree check's meaning: every non-plan working-tree change observed during sync was produced by the sync itself.
 
 ## Examples
 
@@ -77,7 +91,7 @@ The first three commits are authored by the agent; the final snapshot commit is 
 - AC-4: Given a failed execution — agent error, verification failure, or explicit user abort — no snapshot commit is created. Intermediate code commits authored by the agent before the failure remain in history with their `Spec:` trailers intact, and the spec continues to report as drifted until a subsequent sync completes.
 - AC-5: Given a spec with no existing snapshot (status `new` per FEAT-0003), the agent receives the full current spec as the delta (not a diff against nothing).
 - AC-6: Given a plan produced in step 4, the user is shown the plan before execution and must choose one of `approve`, `re-plan`, or `abort` (per FEAT-0009); execution begins only on approval.
-- AC-7: Given `specman sync` with no id argument, every drifted spec in the repo is processed in dependency order (using `depends_on`), one at a time.
+- AC-7: Given `specman sync` with no id argument, every drifted or new spec in the repo is processed in dependency order (using `depends_on`), one at a time. If a spec's sync fails (verification failure, agent error, or user abort), that spec is skipped and all specs that transitively depend on it are also skipped with a message naming the dependency chain. Independent specs continue to be processed.
 - AC-8: Given any code commit produced by the agent during sync, its commit message contains a `Spec: <FEAT-ID>/<AC-ID>` trailer identifying at least one AC the commit addresses.
 - AC-9: Given the snapshot commit produced by a successful sync, its commit message is authored by SpecMan (not the agent) and follows a stable template identifying the sealed spec.
 - AC-10: Given execution reaches verification, each command from the plan's `## Verification` section runs sequentially in the listed order, from the repository root, using the user's shell environment as inherited at sync invocation.
@@ -85,6 +99,13 @@ The first three commits are authored by the agent; the final snapshot commit is 
 - AC-12: Given a verification command leaves new uncommitted changes in the working tree (detected via `git status --porcelain` after the command completes), verification is treated as failed; no snapshot commit is created.
 - AC-13: Given every verification command exits zero and the working tree remains clean throughout, SpecMan proceeds to write the snapshot commit.
 - AC-14: Given `specman sync <ID>` invoked while the working tree has uncommitted changes outside of `.specman/plans/<ID>.md`, sync exits with an error naming the dirty paths before producing a plan or invoking the agent. An uncommitted `.specman/plans/<ID>.md` alone is permitted and triggers the resume flow (FEAT-0009).
+- AC-15: Given `specman sync` (no ID) invoked while the working tree has uncommitted changes outside of `.specman/plans/`, sync exits with an error naming the dirty paths. Uncommitted plan files for any spec in the sync scope are permitted; each triggers its own resume flow when that spec's turn arrives.
+- AC-16: Given `specman seal <FEAT-ID>` where the spec is drifted and no acceptance criteria have changed relative to the snapshot, the snapshot is updated and a single commit is created.
+- AC-17: Given `specman seal <FEAT-ID>` where the spec has AC-level drift (ACs added, removed, or changed), the command exits non-zero with an error directing the user to `specman sync`.
+- AC-18: Given `specman seal <FEAT-ID>` where the spec is `new` (no snapshot) or `in-sync`, the command exits non-zero with an appropriate message.
+- AC-19: Given `specman sync <ID>` where the spec is drifted but no acceptance criteria have been added, removed, or changed relative to the snapshot, sync exits without producing a plan and prints a message directing the user to update ACs or run `specman seal <ID>`.
+- AC-20: Given `specman seal <FEAT-ID>` invoked while the working tree has uncommitted changes, the command exits non-zero with an error naming the dirty paths and does not modify the snapshot.
+- AC-21: Given execution completes and new commits exist since sync started, SpecMan checks that every commit carries at least one `Spec: <FEAT-ID>/<AC-ID>` trailer matching the synced spec. If any commit lacks a matching trailer, sync fails before verification, surfacing the offending commit hash and message.
 
 ## Out of scope
 
@@ -102,5 +123,5 @@ The first three commits are authored by the agent; the final snapshot commit is 
 
 ## Open questions
 
-- Where does the agent actually run? CLI-embedded (SpecMan invokes an SDK directly) vs. "SpecMan writes a prompt file and the user runs it in Claude Code." *Decide before MVP ships: prompt-generation is cheaper and exposes the contract cleanly; revisit once manual-prompting friction is concrete.*
+- Where does the agent actually run? SpecMan's role ends at plan approval and resumes at verification. Between those two points, the user takes the approved plan to an external coding agent of their choice (Claude Code, Open Code, Pi, or similar). The exact handoff mechanism — SpecMan writes a prompt file, copies the plan to clipboard, or integrates via an SDK — is an implementation decision. *Decide before MVP ships; lean toward the simplest handoff (plan file on disk that the user feeds to their agent) and add tighter integration once the manual workflow proves its shape.*
 - Does the trailer-derivation scope degrade on long-lived repos where ACs accumulate many historical touches that are no longer relevant? *Decide once a real repo exhibits the problem. Mitigations if it appears: recency weighting, intersecting with files-currently-touched-by-the-spec's-changed-ACs-only, or promoting a stored index — but only when the pain is concrete.*
