@@ -188,9 +188,12 @@ export default function (pi: ExtensionAPI) {
 
 					proc.stdout.on("data", (data: Buffer) => {
 						buffer += data.toString();
-						const lines = buffer.split("\n");
-						buffer = lines.pop() || "";
-						for (const line of lines) processLine(line);
+						let newlineIdx: number;
+						while ((newlineIdx = buffer.indexOf("\n")) !== -1) {
+							const line = buffer.slice(0, newlineIdx);
+							buffer = buffer.slice(newlineIdx + 1);
+							processLine(line);
+						}
 					});
 
 					proc.stderr.on("data", (data: Buffer) => {

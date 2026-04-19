@@ -191,6 +191,15 @@ export default function (pi: ExtensionAPI) {
 						stdio: ["ignore", "pipe", "pipe"],
 					});
 					let buffer = "";
+					let updateThrottle: ReturnType<typeof setTimeout> | null = null;
+
+					const throttledUpdate = () => {
+						if (updateThrottle) return;
+						updateThrottle = setTimeout(() => {
+							updateThrottle = null;
+							emitUpdate();
+						}, 500);
+					};
 
 					const processLine = (line: string) => {
 						if (!line.trim()) return;
@@ -203,9 +212,19 @@ export default function (pi: ExtensionAPI) {
 
 						if (event.type === "message_end" && event.message) {
 							const msg = event.message as Message;
-							details.messages.push(msg);
-
+							// Only keep assistant final messages and tool results
+							// to avoid unbounded memory growth
 							if (msg.role === "assistant") {
+								// Only keep the last assistant message (the final report)
+								// Drop intermediate ones to save memory
+								const lastAssistantIdx = details.messages.findLastIndex(
+									(m) => m.role === "assistant"
+								);
+								if (lastAssistantIdx >= 0) {
+									details.messages[lastAssistantIdx] = msg;
+								} else {
+									details.messages.push(msg);
+								}
 								details.usage.turns++;
 								const usage = msg.usage;
 								if (usage) {
@@ -218,20 +237,21 @@ export default function (pi: ExtensionAPI) {
 								}
 								if (!details.model && msg.model) details.model = msg.model;
 							}
-							emitUpdate();
+							throttledUpdate();
 						}
-
-						if (event.type === "tool_result_end" && event.message) {
-							details.messages.push(event.message as Message);
-							emitUpdate();
-						}
+						// Skip tool_result_end — we don't need intermediate results
 					};
 
 					proc.stdout.on("data", (data: Buffer) => {
 						buffer += data.toString();
-						const lines = buffer.split("\n");
-						buffer = lines.pop() || "";
-						for (const line of lines) processLine(line);
+						// Process complete lines immediately to keep the pipe draining
+						let newlineIdx: number;
+						while ((newlineIdx = buffer.indexOf("\n")) !== -1) {
+							const line = buffer.slice(0, newlineIdx);
+							buffer = buffer.slice(newlineIdx + 1);
+							processLine(line);
+						}
+					});
 					});
 
 					proc.stderr.on("data", (data: Buffer) => {
