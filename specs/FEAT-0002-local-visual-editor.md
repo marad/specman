@@ -32,7 +32,7 @@ The body editor is a structured markdown editor rather than full WYSIWYG: it pro
 Typical authoring flow:
 
 1. User runs `specman dev` in the repo root. Browser opens to `http://localhost:<port>/`.
-2. List view shows every spec with id, title, status, and a drift indicator.
+2. List view shows every spec with id, title, and status.
 3. User selects `FEAT-0042`. The editor view opens with frontmatter on top as a form (id read-only, title editable, status as a dropdown) and body sections rendered below.
 4. User edits the Intent prose and adds a new AC. The new AC appears as `AC-<next>`; existing ACs are untouched.
 5. User saves. The file on disk is updated with a diff-clean markdown serialization.
