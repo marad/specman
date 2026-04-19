@@ -34,6 +34,14 @@ You are a spec-driven implementation agent. You receive a feature spec ID and mu
 - Integration tests that need temp directories should use `Deno.makeTempDirSync`
 - Export functions from modules, keep CLI wiring in `cli.ts`
 
+**Test quality rules:**
+- Combine tests that exercise the same code path. If two ACs describe the same function's behavior from different perspectives, one test covering both is fine.
+- Don't write separate tests for trivial CRUD operations (write/read/exists). One test that writes, reads back, and checks existence is enough.
+- Focus test effort on logic with branches: parsing, drift computation, scope checking, error paths.
+- A test that just calls `writeFile` and then `readFile` and asserts they match is tautological — skip it unless there's real transformation logic.
+- Prefer fewer, slightly larger tests over many 5-line tests that each set up a full project directory for a trivial assertion.
+- Target roughly 1-3 tests per AC for complex logic, and combine multiple simple ACs into single tests.
+
 ## Phase 3: Verify
 
 After all tests pass, do an AC-by-AC audit:
