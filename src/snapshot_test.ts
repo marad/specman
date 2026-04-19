@@ -600,6 +600,28 @@ Deno.test("generateDiff: returns null for spec with no snapshot", () => {
   });
 });
 
+Deno.test("AC-10: --diff for drifted spec shows unified diff, new spec produces no diff", () => {
+  withProject((root) => {
+    // Drifted spec: has snapshot, content changed
+    const syncedPath = createSyncedSpec(root, "FEAT-0001", "Synced feature");
+    const fullPath = path.join(root, syncedPath);
+    Deno.writeTextFileSync(fullPath, Deno.readTextFileSync(fullPath).replace("status: draft", "status: active"));
+
+    // New spec: no snapshot
+    createSpec(root, "FEAT-0002", "New feature");
+
+    // Drifted spec gets a diff
+    const driftedDiff = generateDiff(root, "FEAT-0001", syncedPath);
+    assert(driftedDiff !== null, "drifted spec should produce a diff");
+    assertStringIncludes(driftedDiff, "draft");
+    assertStringIncludes(driftedDiff, "active");
+
+    // New spec gets no diff
+    const newDiff = generateDiff(root, "FEAT-0002", "specs/FEAT-0002-new-feature.md");
+    assertEquals(newDiff, null, "new spec should produce no diff");
+  });
+});
+
 Deno.test("generateDiff: returns diff for drifted spec", () => {
   withProject((root) => {
     const relPath = createSyncedSpec(root, "FEAT-0001", "Feature one");
