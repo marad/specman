@@ -437,6 +437,53 @@ export function planExists(root: string, featId: string): boolean {
   }
 }
 
+/**
+ * Check if a plan file has uncommitted changes relative to HEAD.
+ * Returns true if the file exists on disk and either:
+ *   - is untracked (new file not yet committed), or
+ *   - differs from its HEAD version.
+ * Returns false if the file doesn't exist, or matches HEAD exactly.
+ * Used for resume detection (AC-15/AC-18).
+ */
+export function planHasUncommittedChanges(
+  root: string,
+  featId: string,
+): boolean {
+  const filePath = path.join(root, PLANS_DIR, `${featId}.md`);
+
+  // File must exist on disk
+  try {
+    Deno.statSync(filePath);
+  } catch {
+    return false;
+  }
+
+  const relPath = path.join(PLANS_DIR, `${featId}.md`);
+  try {
+    // Check for modifications relative to HEAD
+    const diffCmd = new Deno.Command("git", {
+      args: ["diff", "--name-only", "HEAD", "--", relPath],
+      cwd: root,
+      stdout: "piped",
+      stderr: "piped",
+    });
+    const { stdout } = diffCmd.outputSync();
+    if (new TextDecoder().decode(stdout).trim().length > 0) return true;
+
+    // Check for untracked
+    const lsCmd = new Deno.Command("git", {
+      args: ["ls-files", "--others", "--exclude-standard", "--", relPath],
+      cwd: root,
+      stdout: "piped",
+      stderr: "piped",
+    });
+    const { stdout: stdout2 } = lsCmd.outputSync();
+    return new TextDecoder().decode(stdout2).trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
 // ─── Drift set loading ─────────────────────────────────────────────────────
 
 /**

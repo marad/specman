@@ -28,6 +28,7 @@ import {
   writePlan,
   readPlan,
   planExists,
+  planHasUncommittedChanges,
   parsePlan,
   isParsedPlan,
   type DriftEntry,
@@ -605,17 +606,15 @@ export function syncOne(
 
   const title = (parsed.frontmatter.title as string) ?? featId;
 
-  // Check for existing plan (resume flow)
+  // Check for existing plan with uncommitted changes (resume flow, AC-15/AC-18)
   const existingPlan = readPlan(root, featId);
   let planContent: string;
 
-  if (existingPlan !== null) {
-    // Existing plan on disk — could be from a prior aborted sync.
-    // For now (no interactive prompt), use existing plan.
-    // The caller can choose to regenerate.
+  if (existingPlan !== null && planHasUncommittedChanges(root, featId)) {
+    // Uncommitted plan from a prior aborted sync — resume with it
     planContent = existingPlan;
   } else {
-    // Generate fresh scaffold (AC-1)
+    // No plan, or plan matches HEAD (prior completed sync) — generate fresh
     const snapshotState = status === "new" ? "new" : "drifted";
     planContent = generatePlan({
       featId,
