@@ -252,7 +252,6 @@ export default function (pi: ExtensionAPI) {
 							processLine(line);
 						}
 					});
-					});
 
 					proc.stderr.on("data", (data: Buffer) => {
 						details.stderr += data.toString();
