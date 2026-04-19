@@ -48,9 +48,15 @@ Verification operates on the post-execution state — it observes the result of 
 
 `specman seal <FEAT-ID>` updates the snapshot for a drifted spec without invoking the agent or producing a plan. It is the correct path when drift is purely editorial — frontmatter metadata changes, prose rewording in non-AC sections, or other modifications that do not require code changes.
 
-Seal requires that the spec is `drifted` (not `new` or `in-sync`). It also requires that no acceptance criteria were added, removed, or changed relative to the current snapshot. If the spec has AC-level drift, seal refuses with an error directing the user to `specman sync` instead.
+Seal requires that the spec is `drifted` (not `in-sync`). When the spec is `drifted`, it also requires that no acceptance criteria were added, removed, or changed relative to the current snapshot. If the spec has AC-level drift, seal refuses with an error directing the user to `specman sync` instead.
+
+When the spec is `new` (no snapshot exists), `specman seal --initial <FEAT-ID>` creates the first snapshot without going through the sync loop. This is the bootstrapping path for specs whose implementation was done outside of SpecMan (manual coding, migration from another workflow, or initial project setup). Without `--initial`, seal refuses for `new` specs with a message directing the user to `specman sync` or `specman seal --initial`.
 
 On success, seal writes the snapshot and creates a single commit updating `.specman/implemented/<FEAT-ID>.md`. It does not produce a plan, invoke the agent, or run verification. Seal requires a clean working tree; if uncommitted changes exist, it exits non-zero with an error naming the dirty paths.
+
+### Dry-run mode
+
+`specman sync --dry-run` (with or without a FEAT-ID) previews what sync would do without generating plan files or invoking the agent. For each spec that would be synced, it prints the FEAT-ID, its status (`new` or `drifted`), and the drift set — which ACs are added, modified, or removed. It exits zero regardless of drift state. This lets users see the scope of a sync before committing to it.
 
 ## Constraints
 
@@ -102,10 +108,14 @@ The first three commits are authored by the agent; the final snapshot commit is 
 - AC-15: Given `specman sync` (no ID) invoked while the working tree has uncommitted changes outside of `.specman/plans/`, sync exits with an error naming the dirty paths. Uncommitted plan files for any spec in the sync scope are permitted; each triggers its own resume flow when that spec's turn arrives.
 - AC-16: Given `specman seal <FEAT-ID>` where the spec is drifted and no acceptance criteria have changed relative to the snapshot, the snapshot is updated and a single commit is created.
 - AC-17: Given `specman seal <FEAT-ID>` where the spec has AC-level drift (ACs added, removed, or changed), the command exits non-zero with an error directing the user to `specman sync`.
-- AC-18: Given `specman seal <FEAT-ID>` where the spec is `new` (no snapshot) or `in-sync`, the command exits non-zero with an appropriate message.
+- AC-18: Given `specman seal <FEAT-ID>` where the spec is `in-sync`, the command exits non-zero with a message saying there is nothing to seal. Given `specman seal <FEAT-ID>` where the spec is `new` and `--initial` is not passed, the command exits non-zero directing the user to use `specman sync` or `specman seal --initial`.
 - AC-19: Given `specman sync <ID>` where the spec is drifted but no acceptance criteria have been added, removed, or changed relative to the snapshot, sync exits without producing a plan and prints a message directing the user to update ACs or run `specman seal <ID>`.
 - AC-20: Given `specman seal <FEAT-ID>` invoked while the working tree has uncommitted changes, the command exits non-zero with an error naming the dirty paths and does not modify the snapshot.
 - AC-21: Given execution completes and new commits exist since sync started, SpecMan checks that every commit carries at least one `Spec: <FEAT-ID>/<AC-ID>` trailer matching the synced spec. If any commit lacks a matching trailer, sync fails before verification, surfacing the offending commit hash and message.
+- AC-22: Given `specman seal --initial <FEAT-ID>` where the spec is `new`, the snapshot is created and a single commit is written. The spec transitions from `new` to `in-sync`.
+- AC-23: Given `specman seal --initial <FEAT-ID>` where the spec already has a snapshot (status `drifted` or `in-sync`), the command exits non-zero with an error saying `--initial` is only for specs with no snapshot.
+- AC-24: Given `specman sync --dry-run`, each spec that would be synced is listed with its FEAT-ID, status, and drift set (ACs added/modified/removed). No plan files are written. Exit code is zero.
+- AC-25: Given `specman sync --dry-run <FEAT-ID>` for a single spec, only that spec's drift is shown.
 
 ## Out of scope
 

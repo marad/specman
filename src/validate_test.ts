@@ -299,6 +299,66 @@ Deno.test("AC-5: conventional filename produces no warning", () => {
   });
 });
 
+// ─── FEAT-0001 AC-6: Invalid status value ──────────────────────────────────
+
+Deno.test("FEAT-0001 AC-6: invalid status value is rejected with offending value named", () => {
+  withProject((root) => {
+    createValidSpec(root, "FEAT-0001", "Feature one", { status: "banana" });
+
+    const result = validate(root);
+    const statusFindings = findingsForCode(result, "E012-invalid-status");
+
+    assertEquals(statusFindings.length, 1);
+    assertEquals(statusFindings[0].severity, "error");
+    assertStringIncludes(statusFindings[0].message, "banana");
+    assertStringIncludes(statusFindings[0].message, "draft");
+    assertStringIncludes(statusFindings[0].message, "active");
+    assertStringIncludes(statusFindings[0].message, "shipped");
+    assertStringIncludes(statusFindings[0].message, "deprecated");
+    assertEquals(exitCode(result, {}), 1);
+  });
+});
+
+Deno.test("FEAT-0001 AC-6: valid status values are accepted", () => {
+  for (const status of ["draft", "active", "shipped", "deprecated"]) {
+    withProject((root) => {
+      createValidSpec(root, "FEAT-0001", "Feature one", { status });
+
+      const result = validate(root);
+      const statusFindings = findingsForCode(result, "E012-invalid-status");
+      assertEquals(statusFindings.length, 0, `status '${status}' should be valid`);
+    });
+  }
+});
+
+Deno.test("FEAT-0001 AC-6: non-string status gets type error not status error", () => {
+  withProject((root) => {
+    // status: 42 is not a string, so it should get a type error, not an invalid-status error
+    const specPath = path.join(root, "specs", "FEAT-0001-test.md");
+    Deno.writeTextFileSync(specPath, `---
+id: FEAT-0001
+title: Test
+status: 42
+depends_on: []
+---
+
+## Intent
+
+Test intent.
+
+## Acceptance criteria
+
+- AC-1: Test criterion.
+`);
+
+    const result = validate(root);
+    const statusFindings = findingsForCode(result, "E012-invalid-status");
+    assertEquals(statusFindings.length, 0, "non-string status should not trigger invalid-status");
+    const typeFindings = findingsForCode(result, "E003-wrong-type");
+    assert(typeFindings.length > 0, "non-string status should trigger wrong-type");
+  });
+});
+
 // ─── AC-6: Orphan snapshot ──────────────────────────────────────────────────
 
 Deno.test("AC-6: snapshot with no matching spec is orphaned error", () => {

@@ -2,7 +2,7 @@
 id: FEAT-0009
 title: Sync plan format
 status: draft
-depends_on: [FEAT-0001, FEAT-0003, FEAT-0004]
+depends_on: [FEAT-0001, FEAT-0003]
 ---
 
 ## Intent

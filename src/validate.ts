@@ -46,6 +46,7 @@ const E_EMPTY_SECTION = "E005-empty-section";
 const E_DEPENDS_ON_MISSING = "E006-depends-on-missing";
 const E_CYCLE = "E007-cycle";
 const E_DUPLICATE_AC = "E008-duplicate-ac";
+const E_INVALID_STATUS = "E012-invalid-status";
 const E_ORPHAN_SNAPSHOT = "E009-orphan-snapshot";
 const E_SNAPSHOT_MISMATCH = "E010-snapshot-mismatch";
 const E_ORPHAN_PLAN = "E011-orphan-plan";
@@ -56,6 +57,10 @@ const W_FILENAME_CONVENTION = "W001-filename-convention";
 // ─── Filename convention ────────────────────────────────────────────────────
 
 const FEAT_FILENAME_PATTERN = /^FEAT-\d+-[a-z0-9-]+\.md$/;
+
+// ─── Valid status values ─────────────────────────────────────────────────────
+
+const VALID_STATUSES = new Set(["draft", "active", "shipped", "deprecated"]);
 
 // ─── Core ───────────────────────────────────────────────────────────────────
 
@@ -196,6 +201,17 @@ export function validate(projectRoot: string): ValidateResult {
         path: relPath,
         line: fmLineBase,
         message: `field 'depends_on' must be an array, got ${typeof fm.depends_on}`,
+      });
+    }
+
+    // Status value validation (FEAT-0001 AC-6)
+    if (typeof fm.status === "string" && !VALID_STATUSES.has(fm.status)) {
+      findings.push({
+        code: E_INVALID_STATUS,
+        severity: "error",
+        path: relPath,
+        line: findFrontmatterFieldLine(projectRoot, relPath, "status"),
+        message: `invalid status '${fm.status}'; must be one of: draft, active, shipped, deprecated`,
       });
     }
 
