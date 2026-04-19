@@ -20,6 +20,12 @@ The user runs `specman init` in any directory. SpecMan creates the following, if
 
 Each path that gets created is listed in the output. Paths already present are listed separately. When all four paths already exist as directories, the command reports the repo as already initialized and exits zero.
 
+### Root discovery
+
+Every SpecMan command except `init` needs to locate the project root — the directory containing `specs/` and `.specman/`. Discovery walks up the directory tree from the current working directory, checking each ancestor for the presence of both `specs/` and `.specman/` as directories. The first ancestor that contains both is the project root. If the filesystem root is reached without finding a match, the command exits non-zero with a clear message: "no SpecMan project found (walked up from <CWD>)."
+
+`specman init` is exempt from root discovery because its job is to create the layout. All other commands resolve paths relative to the discovered root, so they work identically regardless of which subdirectory the user invokes them from.
+
 Init is purely additive: it never deletes, overwrites, or modifies existing content. No files are created inside any of the created directories — they start empty. The `.specman/` layout is designed to be committed to the repository entirely (snapshots per FEAT-0003, plans per FEAT-0009); init adds no `.gitignore` entries, because nothing in the layout is meant to be ignored.
 
 Init does not require or create a git repository. If no `.git` directory is present at the working directory root, init succeeds but prints a warning naming the SpecMan commands that will need git to function (notably `specman sync` and `specman status`). Init does not invoke `git init` on the user's behalf — managing the repository is the user's choice.
@@ -97,6 +103,8 @@ error: .specman exists but is a file, not a directory — refusing to overwrite
 - AC-7: Given `specman init` fails partway through creation (e.g. permission denied on one subdirectory), paths already created persist, and a subsequent successful re-run completes the remaining paths without attempting to recreate the ones that already exist.
 - AC-8: Given `specman init` succeeds, no file is created inside any of the created directories — they start empty.
 - AC-9: Given `specman init` runs in a directory whose parent is a SpecMan-initialized repo (so `specs/` would shadow a parent's), it still creates the local layout without inspecting ancestors; SpecMan has no notion of inherited initialization.
+- AC-10: Given any SpecMan command other than `init` invoked from a subdirectory of an initialized project, the command discovers the project root by walking up the directory tree and operates against it as if invoked from the root.
+- AC-11: Given any SpecMan command other than `init` invoked from a directory with no SpecMan project in any ancestor, the command exits non-zero with a message naming the starting directory and stating that no project was found.
 
 ## Out of scope
 
@@ -112,7 +120,7 @@ error: .specman exists but is a file, not a directory — refusing to overwrite
 - Not interactive. No prompts, no wizard, no "would you like to git init?" dialogue. Init reads its working directory and writes directories, nothing else.
 - Not destructive under any flag. There is no `--force`, no `--reset`, no `--clean`. Users who want to wipe SpecMan state do it with `rm -rf` and git.
 - Not a recovery tool. If the layout is damaged (e.g. `.specman/implemented/` was deleted but snapshot commits reference it), init will re-create the directory but will not attempt to restore its contents. Git history and `specman sync` are the right recovery paths.
-- Not opinionated about the working directory. Init does not check whether it is being run at the repo root versus a subdirectory; it creates the layout relative to wherever it was invoked. Misplaced invocations are a user error caught by subsequent commands failing to find the expected layout.
+- Not opinionated about the working directory. Init creates the layout relative to wherever it is invoked. Other commands use root discovery (walk-up) and work from any subdirectory, but init always creates in-place — a misplaced init produces a layout that shadows or duplicates the intended one, which is a user error.
 
 ## Open questions
 

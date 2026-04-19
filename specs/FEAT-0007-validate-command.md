@@ -16,6 +16,7 @@ The user runs `specman validate` from within a repo. The command walks `specs/` 
 - Every spec parses successfully.
 - Every `id` is unique across the repo — regardless of which subfolder each spec lives in.
 - Every `depends_on` reference targets an existing spec `id`.
+- The `depends_on` graph is acyclic — no spec transitively depends on itself. Self-references (a spec listing its own id) are ignored and do not constitute a cycle.
 - Every spec file's leaf name matches the `<FEAT-ID>-<slug>.md` convention; subfolder names themselves are unconstrained.
 - Every snapshot under `.specman/implemented/` has a matching spec and a matching embedded `id` (FEAT-0003).
 - Every plan file under `.specman/plans/` has a matching spec.
@@ -81,8 +82,9 @@ JSON output (shape):
 - AC-1: Given a repo whose specs all parse and satisfy every cross-file check, `specman validate` exits with code 0 and prints a summary including the count of specs checked.
 - AC-2: Given two specs declaring the same `id`, validate reports both files with severity `error` and exits with code 1.
 - AC-3: Given a `depends_on` entry referencing a nonexistent spec `id`, validate reports a finding with severity `error`.
-- AC-4: Given a file whose name does not match the `<FEAT-ID>-<slug>.md` convention, validate reports a finding with severity `warning` (per FEAT-0001 AC-7).
-- AC-5: Given a snapshot file at `.specman/implemented/<ID>.md` with no matching spec, validate reports it as orphaned with severity `error` (per FEAT-0003 AC-4).
+- AC-4: Given a cycle of length two or more in the `depends_on` graph (e.g. A depends on B, B depends on A), validate reports a finding with severity `error` naming the specs involved in the cycle. Self-references (a spec listing its own id in `depends_on`) are ignored — they do not constitute a cycle and are not flagged.
+- AC-5: Given a file whose name does not match the `<FEAT-ID>-<slug>.md` convention, validate reports a finding with severity `warning` (per FEAT-0001 AC-7).
+- AC-6: Given a snapshot file at `.specman/implemented/<ID>.md` with no matching spec, validate reports it as orphaned with severity `error` (per FEAT-0003 AC-4).
 - AC-7: Given a run with warnings but no errors, exit code is 0 by default and 1 under `--strict`.
 - AC-8: Given `--format=json`, the output is a single JSON document containing a `summary` object and a `findings` array, with one entry per finding carrying at minimum `code`, `severity`, `path`, and `message`.
 - AC-9: Given two invocations against an identical repo state with identical flags, the output is byte-identical across runs.

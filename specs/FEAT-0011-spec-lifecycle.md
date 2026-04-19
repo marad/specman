@@ -21,7 +21,7 @@ If the new filename does not match `<FEAT-ID>-<slug>.md`, validate (FEAT-0007) e
 
 Removes, if present, everything SpecMan tracks for `<FEAT-ID>`:
 
-- `specs/*/<FEAT-ID>-<slug>.md` — the spec file, wherever it lives under `specs/`
+- `specs/*/<FEAT-ID>-<slug>.md` — the spec file, wherever it lives under `specs/`. Lookup first matches by filename pattern (`specs/**/<FEAT-ID>-*.md`); if no match is found, falls back to scanning `.md` files under `specs/` (excluding `specs/assets/`) for an `id: <FEAT-ID>` frontmatter field.
 - `.specman/implemented/<FEAT-ID>.md` — the snapshot
 - `.specman/plans/<FEAT-ID>.md` — the plan
 - `specs/assets/<FEAT-ID>/` — the asset folder (recursively, with contents)
