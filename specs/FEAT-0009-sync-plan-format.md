@@ -19,7 +19,7 @@ If the plan file already exists with uncommitted changes at sync start — the t
 
 If the plan file is absent or matches HEAD (meaning the last sync sealed cleanly and the committed artifact is still in place), no prompt appears; sync writes a fresh scaffold for the current drift, overwriting the HEAD plan as part of normal flow. The HEAD plan is not user state — it is a record of a completed past sync, and the new sync will produce its own record at seal.
 
-Resume uses the plan file as the user last left it, regardless of whether the spec has drifted further since the plan was generated. If the spec's drift set has changed in the meantime, the approval-time scope check (AC-7) will reject the mismatch; the user then picks `re-plan` to regenerate approach (and should consider `abort` + fresh sync if the scaffold itself needs to change).
+Resume uses the plan file as the user last left it, regardless of whether the spec has drifted further since the plan was generated. If the spec's drift set has changed in the meantime, the approval-time scope check (AC-7) will reject the mismatch; the user then picks `re-plan` to regenerate approach (and should consider `abort` + fresh sync if the scaffold itself needs to change). On resumed execution, the agent operates against the current codebase state, which includes any commits from prior attempts; it is expected to recognize already-completed work and skip it.
 
 ### Authorship
 
@@ -48,11 +48,15 @@ A plan file has the following sections, in this order:
    - For `modified`: a short note on what changed in the AC text.
    - **Approach** — prose describing what the agent intends to do for this AC.
    - **Files** — list of paths the agent expects to touch (new, modified, deleted).
-4. **Cross-cutting** — a single section for work that cannot be attributed to a single AC (shared helpers touched by multiple ACs, refactors prerequisite to the plan). Often empty; omitted when empty.
+4. **Cross-cutting** — a single section for work that cannot be attributed to a single AC (shared helpers touched by multiple ACs, refactors prerequisite to the plan). Commits for cross-cutting work carry multiple `Spec:` trailers, one per AC they serve. Often empty; omitted when empty.
 5. **Verification** — a list of runnable checks (shell commands) that must all pass before the snapshot commit is written. These are what FEAT-0004's "verification passes" resolves to.
 
 ## Constraints
 
+- **Plan parsing is structural and line-based.** SpecMan machine-parses the plan file using the following rules:
+  - **AC sections**: any `##` heading matching `## AC-<N> (<type>): <text>` where `<N>` is an integer and `<type>` is one of `added`, `modified`, `removed`. The AC ID (`AC-<N>`) and type are extracted from the heading. Content between this heading and the next `##` heading is the section body.
+  - **Verification commands**: under the `## Verification` heading, each bullet (`- `) whose text is a single backtick-delimited span (e.g. `` - `npm test` ``) is extracted as a runnable command. The text inside the backticks is the command string passed to the shell. Bullets without backtick-delimited commands are ignored (treated as commentary). Nested or fenced code blocks are not treated as commands.
+  - **Scope check at approval**: SpecMan extracts the set of `(AC-ID, type)` pairs from AC section headings and compares it against the drift set. Any mismatch — missing section, extra section, changed ID or type — is a scope-change error.
 - **Scope is locked to the spec diff.** The set of AC IDs appearing as sections in the plan must equal the set of AC IDs in the drift set. User edits that change this set are rejected at approval.
 - **Approach is editable.** Prose, file lists, and verification steps may be freely edited by the user before approval; accepted edits constrain the agent on re-plan and bind execution on approve.
 - **SpecMan owns the scaffold; the agent owns the approach.** SpecMan's writes are deterministic and reproducible from the spec diff alone. No agent call is required to produce the scaffold.

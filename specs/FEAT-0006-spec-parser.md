@@ -117,13 +117,13 @@ Let users regain account access without contacting support.
 
 ## Acceptance criteria
 
-- AC-1: Given a well-formed spec file, `parse` returns a `ParsedSpec` whose `frontmatter` contains every key present in the YAML block (with YAML-parsed values as-is), whose `sections` lists every `##` heading and its raw body in source order, and whose `acceptance_criteria` lists every `AC-<N>:` bullet from the `## Acceptance criteria` section in source order.
+- AC-1: Given a well-formed spec file, `parse` returns a `ParsedSpec` whose `frontmatter` contains every key present in the YAML block (with YAML-parsed values as-is), whose `sections` lists every `##` heading and its raw body in source order, and whose `acceptance_criteria` lists every AC bullet from the `## Acceptance criteria` section in source order.
 - AC-2: Given malformed YAML frontmatter, `parse` returns a `ParseError` naming the line within the frontmatter block.
 - AC-3: Given a frontmatter field whose YAML-parsed value is of an unexpected type (e.g. `status: 42`), `parse` does not fail — the value is placed into `frontmatter` as YAML parsed it, for the validator to judge against FEAT-0001.
 - AC-4: Given a spec that omits a required frontmatter field or a required body section, `parse` does not fail — the field is simply absent from `frontmatter` and/or the section is absent from `sections`.
 - AC-5: Given a required body section present with an empty body, `parse` returns it in `sections` with an empty body string; this is not a parser error.
-- AC-6: Given an `## Acceptance criteria` section, every bullet matching `AC-<N>:` is extracted with its ID preserved and its text captured verbatim, in source order.
-- AC-7: Given a bullet matching `AC-<N>:` outside the `## Acceptance criteria` section, `parse` does not include it in `acceptance_criteria`.
+- AC-6: Given an `## Acceptance criteria` section, every bullet whose text starts with `AC-<N>` (where `<N>` is one or more digits) followed eventually by a `:` is extracted as an acceptance criterion. The ID is `AC-<N>`. Any text between the ID and the first `:` (e.g. a platform marker like `*(web only)*`) is ignored for ID extraction but preserved in the raw text. The AC text is everything after the first `:`, captured verbatim. Extraction is in source order.
+- AC-7: Given a bullet matching the AC pattern outside the `## Acceptance criteria` section, `parse` does not include it in `acceptance_criteria`.
 - AC-8: Given two acceptance criteria within a single file declaring the same ID, both entries appear in `acceptance_criteria` in source order — `parse` does not fail or deduplicate. The validator flags the duplicate.
 - AC-9: Given any `ParseError`, the returned value carries at minimum a path and a line number sufficient for an editor or CLI to point the user at the problem.
 - AC-10: Given a `ParsedSpec` produced by `parse`, `serialize(parse(bytes))` returns `bytes` byte-for-byte when `bytes` was already in canonical form.
