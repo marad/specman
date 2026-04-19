@@ -17,6 +17,17 @@ import {
   generateDiff,
 } from "./src/snapshot.ts";
 import {
+  syncOne,
+  syncAll,
+  seal,
+  checkWorkingTree,
+  formatSyncResult,
+  formatSyncAllResult,
+  formatSealResult,
+} from "./src/sync.ts";
+import { detectDrift } from "./src/snapshot.ts";
+import { walkSpecFiles } from "./src/specs.ts";
+import {
   validate,
   formatHuman,
   formatJson,
@@ -36,6 +47,8 @@ Commands:
   status      Show drift status of all specs
   validate    Validate specs and snapshots
   delete      Remove a spec and all its tracked artifacts
+  sync        Sync drifted specs (generate plans, run verification)
+  seal        Seal editorial changes (no AC drift)
   
 Run 'specman <command> --help' for details.`);
   Deno.exit(0);
@@ -217,6 +230,129 @@ Options:
       }
     }
     Deno.exit(0);
+  }
+
+  case "sync": {
+    // Handle --help before requiring project root
+    const syncArgs = args.slice(1);
+    if (syncArgs.includes("--help") || syncArgs.includes("-h")) {
+      console.log(`Usage: specman sync [FEAT-ID]
+
+Sync drifted specs by generating implementation plans.
+
+With FEAT-ID: sync a single spec.
+Without: sync all drifted/new specs in dependency order.
+
+Options:
+  --help   Show this help`);
+      Deno.exit(0);
+    }
+
+    const root = requireProjectRoot(Deno.cwd());
+
+    const featId = syncArgs.find((a) => a.startsWith("FEAT-"));
+
+    if (featId) {
+      // Single spec sync (AC-14)
+      const planPath = `.specman/plans/${featId}.md`;
+      const disallowed = checkWorkingTree(root, [planPath]);
+      if (disallowed !== null) {
+        console.error("error: working tree has uncommitted changes:");
+        for (const p of disallowed) {
+          console.error(`  ${p}`);
+        }
+        console.error("Commit or stash changes before running sync.");
+        Deno.exit(1);
+      }
+
+      // Find spec file
+      const specFiles = walkSpecFiles(root);
+      const specEntry = specFiles.find((s) => s.id === featId);
+      if (!specEntry) {
+        console.error(`error: no spec found for ${featId}`);
+        Deno.exit(1);
+      }
+
+      const status = detectDrift(root, featId, specEntry.relPath);
+      const result = syncOne(root, featId, specEntry.relPath, status);
+      const lines = formatSyncResult(result);
+      for (const line of lines) {
+        if (line.startsWith("error:")) {
+          console.error(line);
+        } else {
+          console.log(line);
+        }
+      }
+      Deno.exit(result.outcome === "error" ? 1 : 0);
+    } else {
+      // Multi-spec sync (AC-7, AC-15)
+      const disallowed = checkWorkingTree(root, []);
+      // Allow plan files in .specman/plans/
+      const filtered = disallowed?.filter(
+        (p) => !p.startsWith(".specman/plans/")
+      ) ?? null;
+      if (filtered !== null && filtered.length > 0) {
+        console.error("error: working tree has uncommitted changes:");
+        for (const p of filtered) {
+          console.error(`  ${p}`);
+        }
+        console.error("Commit or stash changes before running sync.");
+        Deno.exit(1);
+      }
+
+      const result = syncAll(root);
+      const lines = formatSyncAllResult(result);
+      for (const line of lines) {
+        if (line.startsWith("error:")) {
+          console.error(line);
+        } else {
+          console.log(line);
+        }
+      }
+
+      const hasFailures = result.results.some(
+        (r) => r.outcome === "error" || r.outcome === "verification-failed" ||
+               r.outcome === "trailer-check-failed"
+      );
+      Deno.exit(hasFailures ? 1 : 0);
+    }
+    break;
+  }
+
+  case "seal": {
+    // Handle --help before requiring project root
+    if (args.slice(1).includes("--help") || args.slice(1).includes("-h")) {
+      console.log(`Usage: specman seal <FEAT-ID>
+
+Seal editorial changes to a drifted spec without running the agent.
+Updates the snapshot and creates a single commit.
+
+Requires:
+  - Spec must be 'drifted' (not 'new' or 'in-sync')
+  - No acceptance criteria may have changed
+  - Clean working tree`);
+      Deno.exit(0);
+    }
+
+    const root = requireProjectRoot(Deno.cwd());
+    const sealArgs = args.slice(1);
+    const sealFeatId = sealArgs.find((a) => a.startsWith("FEAT-"));
+
+    if (!sealFeatId) {
+      console.error("error: missing FEAT-ID. Usage: specman seal <FEAT-ID>");
+      Deno.exit(1);
+    }
+
+    const result = seal(root, sealFeatId);
+    const lines = formatSealResult(result);
+    for (const line of lines) {
+      if (line.startsWith("error:")) {
+        console.error(line);
+      } else {
+        console.log(line);
+      }
+    }
+    Deno.exit(result.outcome === "error" ? 1 : 0);
   }
 
   default: {
