@@ -26,7 +26,7 @@ Drift detection compares the **canonical form** of the current spec against the 
 ## Constraints
 
 - Snapshots are written **only** by the sync or seal commands (FEAT-0004). No other code path — editor, validator, external tool, test harness — ever creates or modifies a snapshot. Violating this invariant would silently mark drifted specs as in-sync.
-- Drift comparison uses canonical-form normalization (parse then serialize via FEAT-0006) before byte comparison. This means formatting-only differences (whitespace, frontmatter key order, blank lines) do not constitute drift. Content differences — any change to frontmatter values, section text, or acceptance criteria — always constitute drift.
+- Drift comparison uses canonical-form normalization (parse then serialize via FEAT-0006) before byte comparison. This means structural formatting differences (frontmatter key order, blank lines between sections) do not constitute drift. Content differences — any change to frontmatter values, section text, or acceptance criteria — always constitute drift. Note that trailing whitespace within section bodies is preserved by the parser and serializer, so editor-induced trailing space changes do register as drift; `specman seal` handles this case.
 - Snapshots live in the repo (`.specman/implemented/`) so they are version-controlled and visible in PRs. No hidden state outside version control.
 - Snapshot filenames are keyed on `<FEAT-ID>`, not on the spec's on-disk filename, so renaming a spec file does not break the snapshot link as long as the ID stays stable.
 
@@ -48,7 +48,7 @@ specs/
 
 ```
 FEAT-0001 in-sync
-FEAT-0042 drifted  (body changed)
+FEAT-0042 drifted  (changed since last sync)
 FEAT-0099 new      (no snapshot yet)
 ```
 
@@ -63,6 +63,7 @@ FEAT-0099 new      (no snapshot yet)
 - AC-7: Given a failed or aborted sync, the snapshot is not modified.
 - AC-8: Given `specman status` invoked with no arguments, `drifted` and `new` specs are both listed; `in-sync` specs are summarized as a count unless `--verbose` is passed.
 - AC-9: Given a spec file that fails to parse (malformed YAML, unterminated frontmatter), drift detection falls back to raw byte-for-byte comparison against the snapshot, and the spec is reported as `drifted`.
+- AC-10: Given `specman status --diff` invoked, `drifted` specs include a unified diff between canonical forms (snapshot vs. current); `new` specs produce no diff output (there is no snapshot to diff against).
 
 ## Out of scope
 

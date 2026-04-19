@@ -8,6 +8,7 @@
 
 import * as path from "@std/path";
 import { parse, serialize, isParsedSpec, type ParsedSpec } from "./parser.ts";
+import { walkSpecFiles } from "./specs.ts";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -50,9 +51,7 @@ export interface SnapshotValidation {
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 const IMPLEMENTED_DIR = ".specman/implemented";
-const SPECS_DIR = "specs";
 const FEAT_PATTERN = /^FEAT-\d+/;
-const FEAT_FILE_PATTERN = /^(FEAT-\d+)-.*\.md$/;
 
 // ─── Core Functions ─────────────────────────────────────────────────────────
 
@@ -154,50 +153,7 @@ export function readSnapshot(
  * Skips specs/assets/.
  */
 export function scanSpecs(projectRoot: string): Array<{ id: string; relPath: string }> {
-  const specsDir = path.join(projectRoot, SPECS_DIR);
-  const results: Array<{ id: string; relPath: string }> = [];
-  walkSpecs(specsDir, specsDir, projectRoot, results);
-  // Sort by ID for deterministic output
-  results.sort((a, b) => a.id.localeCompare(b.id));
-  return results;
-}
-
-function walkSpecs(
-  dir: string,
-  specsRoot: string,
-  projectRoot: string,
-  results: Array<{ id: string; relPath: string }>,
-): void {
-  let entries: Iterable<Deno.DirEntry>;
-  try {
-    entries = Deno.readDirSync(dir);
-  } catch {
-    return;
-  }
-
-  for (const entry of entries) {
-    if (entry.isDirectory) {
-      const relToSpecs = path.relative(specsRoot, path.join(dir, entry.name));
-      if (relToSpecs === "assets" || relToSpecs.startsWith("assets/") || relToSpecs.startsWith("assets\\")) {
-        continue;
-      }
-      walkSpecs(path.join(dir, entry.name), specsRoot, projectRoot, results);
-    } else if (entry.isFile && entry.name.endsWith(".md")) {
-      const match = entry.name.match(FEAT_FILE_PATTERN);
-      if (match) {
-        const rawId = match[1];
-        // Normalize to 4-digit zero-padded
-        const numMatch = rawId.match(/^FEAT-(\d+)$/);
-        if (numMatch) {
-          const num = parseInt(numMatch[1], 10);
-          const id = `FEAT-${String(num).padStart(4, "0")}`;
-          const fullPath = path.join(dir, entry.name);
-          const relPath = path.relative(projectRoot, fullPath);
-          results.push({ id, relPath });
-        }
-      }
-    }
-  }
+  return walkSpecFiles(projectRoot).map(e => ({ id: e.id, relPath: e.relPath }));
 }
 
 /**

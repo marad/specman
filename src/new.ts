@@ -7,6 +7,7 @@
 
 import * as path from "@std/path";
 import { serialize, type ParsedSpec } from "./parser.ts";
+import { walkSpecFiles } from "./specs.ts";
 
 export interface NewSpecOptions {
   title: string;
@@ -37,10 +38,9 @@ export function isNewSpecError(r: NewSpecResult | NewSpecError): r is NewSpecErr
  * - Writes minimal scaffold file
  */
 export function newSpec(opts: NewSpecOptions): NewSpecResult | NewSpecError {
-  const specsDir = path.join(opts.projectRoot, "specs");
-
   // ── Scan existing IDs ─────────────────────────────────────────────────
-  const existingIds = scanExistingIds(specsDir);
+  const specFiles = walkSpecFiles(opts.projectRoot);
+  const existingIds = new Set(specFiles.map(s => s.id));
 
   // ── Resolve ID ────────────────────────────────────────────────────────
   let id: string;
@@ -114,43 +114,6 @@ export function newSpec(opts: NewSpecOptions): NewSpecResult | NewSpecError {
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
-
-const FEAT_PATTERN = /^FEAT-(\d+)-.*\.md$/;
-
-/**
- * Scan specs/ recursively for FEAT-NNNN IDs, excluding specs/assets/.
- */
-function scanExistingIds(specsDir: string): Set<string> {
-  const ids = new Set<string>();
-  walkSpecs(specsDir, specsDir, ids);
-  return ids;
-}
-
-function walkSpecs(dir: string, specsRoot: string, ids: Set<string>): void {
-  let entries: Iterable<Deno.DirEntry>;
-  try {
-    entries = Deno.readDirSync(dir);
-  } catch {
-    return;
-  }
-
-  for (const entry of entries) {
-    // Skip assets/ directory (AC-10)
-    if (entry.isDirectory) {
-      const relToSpecs = path.relative(specsRoot, path.join(dir, entry.name));
-      if (relToSpecs === "assets" || relToSpecs.startsWith("assets/") || relToSpecs.startsWith("assets\\")) {
-        continue;
-      }
-      walkSpecs(path.join(dir, entry.name), specsRoot, ids);
-    } else if (entry.isFile && entry.name.endsWith(".md")) {
-      const match = entry.name.match(FEAT_PATTERN);
-      if (match) {
-        const num = parseInt(match[1], 10);
-        ids.add(`FEAT-${String(num).padStart(4, "0")}`);
-      }
-    }
-  }
-}
 
 /**
  * Compute the next FEAT-NNNN ID from existing IDs.
