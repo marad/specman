@@ -40,33 +40,9 @@ specman seal --initial FEAT-0001
 
 ## How It Works
 
-```mermaid
-graph TD
-    A[Write Spec] --> B[Validate]
-    B --> C[Sync]
-    C --> D[Plan]
-    D --> E[Agent Implements]
-    E --> F[Verify]
-    F --> G[Seal Snapshot]
-    G --> H[In-Sync ✓]
-    H -.->|Spec edited| A
-```
+Every feature starts as a Markdown spec with acceptance criteria. SpecMan tracks whether the codebase matches each spec using byte-level snapshots. When you edit a spec, SpecMan detects the drift and helps you sync the implementation — only the changed criteria are targeted, so existing work stays untouched.
 
-### Specs are the source of truth
-
-Every feature starts as a Markdown spec with structured metadata and acceptance criteria (ACs). The spec describes intent and success criteria — it never prescribes implementation. Only AC changes trigger the sync loop; rewording the Intent section is an editorial change that can be sealed without involving the agent.
-
-### Snapshots track implementation state
-
-When a sync completes, SpecMan saves a byte-level snapshot of the spec as it was when the code was written. No fragile version counters — just a file comparison. Future edits to the spec create _drift_: the difference between what's implemented and what's specified.
-
-### Incremental sync bridges the gap
-
-When drift is detected, SpecMan generates a plan targeting **only the changed acceptance criteria**. If you add one new AC to a spec with three existing ones, the agent implements only the new one — existing work is untouched. Verification commands confirm correctness, and a new snapshot seals the result.
-
-### Dependency-aware ordering
-
-Specs declare dependencies via `depends_on`. When syncing multiple specs, SpecMan processes them in the right order. If one spec's sync fails, its dependents are skipped while independent specs continue.
+See the **[Philosophy](docs/philosophy.md)** and **[Workflow Guide](docs/workflow.md)** for the full picture.
 
 ## Documentation
 
