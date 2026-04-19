@@ -26,6 +26,8 @@ The parser's job is to produce a structured representation of the bytes, not to 
 
 Scope is one file per call. Cross-file concerns — duplicate `id`, `depends_on` targets, orphan snapshots — also belong to the validator.
 
+Section splitting respects fenced code blocks: lines matching `## <Heading>` inside a fenced code block (` ``` ` or `~~~`) are not treated as section boundaries. This is critical because spec examples routinely contain markdown snippets with headings.
+
 ### Serialization
 
 `serialize` is called with a `ParsedSpec`. It returns the canonical byte representation of that spec. Serialization is the inverse operation of parsing for canonical input: `parse(serialize(ps))` always reconstructs an equivalent `ParsedSpec`, and `serialize(parse(bytes))` returns `bytes` byte-for-byte when the input was already canonical.
