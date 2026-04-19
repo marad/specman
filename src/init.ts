@@ -107,10 +107,18 @@ export function formatInitResult(result: InitResult): [string[], number] {
 
 function pathStatus(p: string): "directory" | "conflict" | "absent" {
   try {
-    const stat = Deno.lstatSync(p);
+    const stat = Deno.statSync(p); // follows symlinks
     if (stat.isDirectory) return "directory";
     return "conflict"; // exists but not a directory
   } catch (e: unknown) {
+    // statSync throws on broken symlinks and missing paths
+    // Check if it's a broken symlink (lstat succeeds but stat fails)
+    try {
+      Deno.lstatSync(p);
+      return "conflict"; // exists (broken symlink) but not a directory
+    } catch {
+      // truly absent
+    }
     if (e instanceof Deno.errors.NotFound) return "absent";
     throw e;
   }

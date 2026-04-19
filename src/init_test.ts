@@ -274,3 +274,20 @@ Deno.test("AC-11: findProjectRoot requires both specs/ and .specman/", () => {
     assertEquals(root, null);
   });
 });
+
+// ─── Symlink edge cases ────────────────────────────────────────────────────
+
+Deno.test("edge: symlink to directory is accepted as existing dir", () => {
+  withTempDir((dir) => {
+    Deno.mkdirSync(path.join(dir, ".git"));
+    // Create real dir elsewhere, symlink as specs/
+    const realSpecs = path.join(dir, "real_specs");
+    Deno.mkdirSync(realSpecs);
+    Deno.symlinkSync(realSpecs, path.join(dir, "specs"));
+
+    const result = init(dir);
+    assertEquals(result.conflict, null);
+    assert(result.alreadyPresent.includes("specs"));
+    assert(result.created.includes(".specman"));
+  });
+});

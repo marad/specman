@@ -5,7 +5,7 @@
  * in-memory values. Every other SpecMan component calls into this module.
  */
 
-import { parse as parseYaml, stringify as stringifyYaml } from "@std/yaml";
+import { parse as parseYaml } from "@std/yaml";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 

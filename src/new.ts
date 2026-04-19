@@ -49,11 +49,13 @@ export function newSpec(opts: NewSpecOptions): NewSpecResult | NewSpecError {
     if (!/^FEAT-\d+$/.test(opts.id)) {
       return { reason: `invalid ID format '${opts.id}' — expected FEAT-NNNN` };
     }
+    // Normalize to 4-digit zero-padded form
+    const num = parseInt(opts.id.match(/^FEAT-(\d+)$/)![1], 10);
+    id = `FEAT-${String(num).padStart(4, "0")}`;
     // Check for collision (AC-5)
-    if (existingIds.has(opts.id)) {
-      return { reason: `ID ${opts.id} is already in use` };
+    if (existingIds.has(id)) {
+      return { reason: `ID ${id} is already in use` };
     }
-    id = opts.id;
   } else {
     id = nextId(existingIds);
   }
