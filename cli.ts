@@ -8,6 +8,13 @@
 import { init, formatInitResult } from "./src/init.ts";
 import { newSpec, isNewSpecError } from "./src/new.ts";
 import { requireProjectRoot } from "./src/root.ts";
+import {
+  getStatus,
+  formatStatus,
+  validateSnapshots,
+  formatValidation,
+  generateDiff,
+} from "./src/snapshot.ts";
 
 const args = Deno.args;
 const command = args[0];
@@ -18,6 +25,8 @@ if (!command || command === "--help" || command === "-h") {
 Commands:
   init        Initialize SpecMan in the current directory
   new         Create a new spec scaffold
+  status      Show drift status of all specs
+  validate    Validate specs and snapshots
   
 Run 'specman <command> --help' for details.`);
   Deno.exit(0);
@@ -67,6 +76,51 @@ switch (command) {
     }
     console.log(result.path);
     Deno.exit(0);
+  }
+
+  case "status": {
+    const root = requireProjectRoot(Deno.cwd());
+    const statusArgs = args.slice(1);
+    const verbose = statusArgs.includes("--verbose") || statusArgs.includes("-v");
+    const showDiff = statusArgs.includes("--diff");
+
+    const result = getStatus(root);
+    const lines = formatStatus(result, { verbose, diff: showDiff });
+    for (const line of lines) {
+      console.log(line);
+    }
+
+    // Show diffs for drifted specs if --diff
+    if (showDiff) {
+      for (const entry of result.entries) {
+        if (entry.status === "drifted") {
+          const diff = generateDiff(root, entry.id, entry.specPath);
+          if (diff) {
+            console.log("");
+            console.log(`--- ${entry.id} diff ---`);
+            console.log(diff);
+          }
+        }
+      }
+    }
+
+    Deno.exit(0);
+  }
+
+  case "validate": {
+    const root = requireProjectRoot(Deno.cwd());
+    const validation = validateSnapshots(root);
+    const [valLines, hasErrors] = formatValidation(validation);
+
+    if (valLines.length === 0) {
+      console.log("All snapshots valid.");
+    } else {
+      for (const line of valLines) {
+        console.error(line);
+      }
+    }
+
+    Deno.exit(hasErrors ? 1 : 0);
   }
 
   default: {
