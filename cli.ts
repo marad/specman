@@ -8,7 +8,7 @@
 import { init, formatInitResult } from "./src/init.ts";
 import { deleteSpec, isDeleteError, formatDeleteResult } from "./src/delete.ts";
 import { newSpec, isNewSpecError } from "./src/new.ts";
-import { requireProjectRoot } from "./src/root.ts";
+import { findProjectRoot, requireProjectRoot } from "./src/root.ts";
 import {
   getStatus,
   formatStatus,
@@ -36,6 +36,18 @@ import {
   exitCode,
   type ValidateOptions,
 } from "./src/validate.ts";
+import {
+  AGENTS,
+  type AgentId,
+  formatInstallFailure,
+  formatInstallSuccess,
+  formatUninstall,
+  homeDir,
+  installAgents,
+  interactiveSelect,
+  SUPPORTED_AGENT_IDS,
+  uninstallAgents,
+} from "./src/install.ts";
 
 const args = Deno.args;
 const command = args[0];
@@ -51,7 +63,9 @@ Commands:
   delete      Remove a spec and all its tracked artifacts
   sync        Sync drifted specs (generate plans, run verification)
   seal        Seal editorial changes (no AC drift)
-  
+  install     Install agent integrations (skill + slash commands)
+  uninstall   Remove agent integrations
+
 Run 'specman <command> --help' for details.`);
   Deno.exit(0);
 }
@@ -374,6 +388,174 @@ In both cases, a single commit is created updating the snapshot file.`);
       }
     }
     Deno.exit(result.outcome === "error" ? 1 : 0);
+  }
+
+  case "install": {
+    const installArgs = args.slice(1);
+
+    if (installArgs.includes("--help") || installArgs.includes("-h")) {
+      console.log(`Usage: specman install [<agent>...] [--global] [--list]
+
+Install agent integrations: a skill plus three slash commands
+(/spec, /spec-sync, /spec-status) into the agent's native paths.
+
+With one or more agent identifiers as positional args, installs only
+the named agents non-interactively. With no positional args and a TTY,
+shows an interactive checklist. With no positional args and no TTY,
+exits with an error.
+
+Project-scoped by default (writes inside the current specman project).
+Use --global to write to your home directory instead.
+
+Options:
+  --list      Print supported agent identifiers, one per line, and exit.
+  --global    Install to user-home paths instead of project paths.
+  --help      Show this help
+
+Run 'specman uninstall' to remove installed artifacts.`);
+      Deno.exit(0);
+    }
+
+    // AC-4: --list short-circuits before any other check.
+    if (installArgs.includes("--list")) {
+      for (const id of SUPPORTED_AGENT_IDS) console.log(id);
+      Deno.exit(0);
+    }
+
+    const isGlobal = installArgs.includes("--global");
+    const positionals = installArgs.filter((a) => !a.startsWith("--"));
+
+    // AC-5: validate positional agent identifiers before doing anything.
+    for (const p of positionals) {
+      if (!(p in AGENTS)) {
+        console.error(
+          `error: unknown agent '${p}'. Run \`specman install --list\` to see supported agents.`,
+        );
+        Deno.exit(1);
+      }
+    }
+
+    // AC-1, AC-2, AC-3: select agents (positional, interactive, or error).
+    let agents: AgentId[];
+    if (positionals.length > 0) {
+      agents = positionals as AgentId[];
+    } else if (Deno.stdin.isTerminal()) {
+      agents = interactiveSelect(SUPPORTED_AGENT_IDS);
+      if (agents.length === 0) {
+        console.log("No agents selected. Nothing to do.");
+        Deno.exit(0);
+      }
+    } else {
+      console.error(
+        "error: no agents specified and no TTY available for interactive selection.",
+      );
+      console.error(
+        "Pass agent names explicitly, e.g. `specman install claude-code`.",
+      );
+      Deno.exit(1);
+    }
+
+    // AC-6, AC-8: resolve scope.
+    let root: string;
+    if (isGlobal) {
+      try {
+        root = homeDir();
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(`error: ${msg}`);
+        Deno.exit(1);
+      }
+    } else {
+      // Don't use requireProjectRoot — it exits with a generic message.
+      // AC-6 wants an install-specific message that names both
+      // `specman init` and `--global` as remediations.
+      const found = findProjectRoot(Deno.cwd());
+      if (found === null) {
+        console.error(
+          `error: no specman project found (walked up from ${Deno.cwd()}).`,
+        );
+        console.error(
+          "Run `specman init` first, or use `specman install --global` for a per-user install.",
+        );
+        Deno.exit(1);
+      }
+      root = found;
+    }
+
+    // AC-7, AC-8, AC-9, AC-15: install + format output.
+    const result = installAgents(agents, {
+      scope: isGlobal ? "global" : "project",
+      root,
+    });
+
+    if (result.error === null) {
+      for (const line of formatInstallSuccess(result)) console.log(line);
+      Deno.exit(0);
+    } else {
+      const lines = formatInstallFailure(result);
+      for (const line of lines) {
+        if (line.startsWith("error:")) console.error(line);
+        else console.log(line);
+      }
+      Deno.exit(1);
+    }
+  }
+
+  case "uninstall": {
+    const unArgs = args.slice(1);
+
+    if (unArgs.includes("--help") || unArgs.includes("-h")) {
+      console.log(`Usage: specman uninstall <agent>... [--global]
+
+Remove agent integration artifacts written by 'specman install'.
+
+Removes the four artifacts (skill + three slash commands) for each
+named agent. Missing files are not errors. Empty parent directories
+are not pruned.
+
+Options:
+  --global    Remove from user-home paths instead of project paths.
+  --help      Show this help`);
+      Deno.exit(0);
+    }
+
+    const isGlobal = unArgs.includes("--global");
+    const positionals = unArgs.filter((a) => !a.startsWith("--"));
+
+    if (positionals.length === 0) {
+      console.error("error: missing agent identifier. Usage: specman uninstall <agent>... [--global]");
+      Deno.exit(1);
+    }
+
+    for (const p of positionals) {
+      if (!(p in AGENTS)) {
+        console.error(
+          `error: unknown agent '${p}'. Run \`specman install --list\` to see supported agents.`,
+        );
+        Deno.exit(1);
+      }
+    }
+
+    let root: string;
+    if (isGlobal) {
+      try {
+        root = homeDir();
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(`error: ${msg}`);
+        Deno.exit(1);
+      }
+    } else {
+      root = requireProjectRoot(Deno.cwd());
+    }
+
+    const result = uninstallAgents(positionals as AgentId[], {
+      scope: isGlobal ? "global" : "project",
+      root,
+    });
+
+    for (const line of formatUninstall(result)) console.log(line);
+    Deno.exit(0);
   }
 
   default: {

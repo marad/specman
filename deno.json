@@ -1,9 +1,9 @@
 {
   "tasks": {
     "dev": "deno run --watch -A cli.ts",
-    "test": "deno test --allow-read",
-    "compile": "deno compile --allow-read --allow-write --allow-run --output specman cli.ts",
-    "install": "deno compile --allow-read --allow-write --allow-run --output ~/.local/bin/specman cli.ts"
+    "test": "deno test --allow-read --allow-write --allow-env --allow-run",
+    "compile": "deno compile --allow-read --allow-write --allow-run --allow-env --include templates --output specman cli.ts",
+    "install": "deno compile --allow-read --allow-write --allow-run --allow-env --include templates --output ~/.local/bin/specman cli.ts"
   },
   "imports": {
     "@std/assert": "jsr:@std/assert@1",
