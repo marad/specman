@@ -31,6 +31,7 @@ import {
   planHasUncommittedChanges,
   parsePlan,
   isParsedPlan,
+  formatDriftSummary,
   type DriftEntry,
 } from "./plan.ts";
 import { walkSpecFiles } from "./specs.ts";
@@ -710,6 +711,95 @@ export function syncAll(root: string): SyncAllResult {
   return { results, skipped };
 }
 
+// ─── Dry run ────────────────────────────────────────────────────────────────
+
+/** A single entry in the dry-run report */
+export interface DryRunEntry {
+  featId: string;
+  status: "new" | "drifted";
+  /** Formatted drift summary, e.g. "3 added (whole spec)" or "1 added, 2 modified, 0 removed" */
+  summary: string;
+}
+
+/**
+ * Compute what `specman sync` would do, without writing any plan files.
+ *
+ * AC-24: lists each new/drifted spec with id, status, and drift counts.
+ * AC-25: when featId is given, restricts the report to that spec.
+ *
+ * In-sync specs are omitted. Order matches dependency order so the
+ * report mirrors the order a real sync would process them.
+ */
+export function dryRunReport(root: string, featId?: string): DryRunEntry[] {
+  const statusResult = getStatus(root);
+  const specFiles = walkSpecFiles(root);
+
+  const candidates = statusResult.entries.filter((e) => {
+    if (e.status === "in-sync") return false;
+    if (featId !== undefined && e.id !== featId) return false;
+    return true;
+  });
+
+  // Build SpecNodes for dependency ordering (matches syncAll behavior).
+  const nodes: SpecNode[] = [];
+  for (const entry of candidates) {
+    const specFile = specFiles.find((s) => s.id === entry.id);
+    if (!specFile) continue;
+
+    const specFullPath = path.join(root, entry.specPath);
+    let dependsOn: string[] = [];
+    try {
+      const bytes = Deno.readTextFileSync(specFullPath);
+      const parsed = parse(bytes, entry.specPath);
+      if (isParsedSpec(parsed) && Array.isArray(parsed.frontmatter.depends_on)) {
+        dependsOn = parsed.frontmatter.depends_on.filter(
+          (d): d is string => typeof d === "string",
+        );
+      }
+    } catch {
+      // ignore — drift summary will surface the parse failure
+    }
+
+    nodes.push({
+      id: entry.id,
+      relPath: entry.specPath,
+      status: entry.status,
+      dependsOn,
+    });
+  }
+
+  const sorted = topologicalSort(nodes);
+
+  const report: DryRunEntry[] = [];
+  for (const node of sorted) {
+    const driftState = node.status === "new" ? "new" : "drifted";
+    const driftResult = loadDriftSet(root, node.id, node.relPath, driftState);
+    if ("error" in driftResult) {
+      report.push({
+        featId: node.id,
+        status: node.status as "new" | "drifted",
+        summary: `error: ${driftResult.error}`,
+      });
+      continue;
+    }
+    report.push({
+      featId: node.id,
+      status: node.status as "new" | "drifted",
+      summary: formatDriftSummary(driftResult.driftSet, driftState),
+    });
+  }
+
+  return report;
+}
+
+/** Format a dry-run report for CLI output — one line per spec. */
+export function formatDryRunReport(entries: DryRunEntry[]): string[] {
+  if (entries.length === 0) {
+    return ["All specs are in-sync — nothing to sync."];
+  }
+  return entries.map((e) => `${e.featId} ${e.status}: ${e.summary}`);
+}
+
 // ─── Seal ───────────────────────────────────────────────────────────────────
 
 /**
@@ -720,7 +810,13 @@ export function syncAll(root: string): SyncAllResult {
  * AC-18: Refuses if spec is new or in-sync.
  * AC-20: Refuses if working tree is dirty.
  */
-export function seal(root: string, featId: string): SealResult {
+export function seal(
+  root: string,
+  featId: string,
+  opts?: { initial?: boolean },
+): SealResult {
+  const initial = opts?.initial === true;
+
   // Find the spec file
   const specFiles = walkSpecFiles(root);
   const specEntry = specFiles.find((s) => s.id === featId);
@@ -734,11 +830,55 @@ export function seal(root: string, featId: string): SealResult {
   // Check drift status
   const status = detectDrift(root, featId, specEntry.relPath);
 
-  // AC-18: refuse if new or in-sync
+  if (initial) {
+    // AC-23: --initial only valid for new specs
+    if (status !== "new") {
+      return {
+        outcome: "error",
+        message:
+          `--initial is only for specs with no snapshot; ${featId} is currently ${status}. ` +
+          `Use 'specman seal ${featId}' for editorial changes or 'specman sync ${featId}' for AC drift.`,
+      };
+    }
+
+    // AC-20 (parity): refuse if working tree is dirty.
+    // Allow the spec's plan file — writeSnapshotCommit stages it alongside
+    // the snapshot, mirroring the sync seal commit (AC-3).
+    const planRelPath = path.join(".specman", "plans", `${featId}.md`);
+    const dirtyPaths = checkWorkingTree(root, [planRelPath]);
+    if (dirtyPaths !== null) {
+      return {
+        outcome: "error",
+        message:
+          `working tree has uncommitted changes:\n` +
+          dirtyPaths.map((p) => `  ${p}`).join("\n") +
+          `\nCommit or stash changes before running seal.`,
+      };
+    }
+
+    // AC-22: write snapshot and commit
+    const commitResult = writeSnapshotCommit(root, featId, specEntry.relPath);
+    if (!commitResult.success) {
+      return {
+        outcome: "error",
+        message: `${featId}: failed to create snapshot commit: ${commitResult.error}`,
+      };
+    }
+
+    return {
+      outcome: "sealed",
+      message: `${featId}: sealed (initial snapshot created).`,
+    };
+  }
+
+  // AC-18: refuse if new or in-sync (no --initial)
   if (status === "new") {
     return {
       outcome: "error",
-      message: `${featId} has no snapshot (status: new). Use 'specman sync ${featId}' for initial implementation.`,
+      message:
+        `${featId} has no snapshot (status: new). ` +
+        `Use 'specman sync ${featId}' for initial implementation, ` +
+        `or 'specman seal --initial ${featId}' if the implementation already exists.`,
     };
   }
 
