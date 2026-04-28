@@ -32,6 +32,8 @@ import {
   formatSealResult,
   dryRunReport,
   formatDryRunReport,
+  verifyCommand,
+  formatVerifyResult,
   type SyncOneResult,
 } from "../src/sync.ts";
 import {
@@ -1071,5 +1073,205 @@ Deno.test("AC-25: dry run with in-sync FEAT-ID returns empty list", () => {
 
     const report = dryRunReport(root, "FEAT-0042");
     assertEquals(report.length, 0);
+  });
+});
+
+// ─── FEAT-0012: Verify command ──────────────────────────────────────────────
+
+/** Write a plan file with the given verification commands (one per backtick bullet). */
+function writeVerifyPlan(
+  root: string,
+  featId: string,
+  commands: string[],
+): void {
+  const lines = [
+    `# Sync plan — ${featId} Test`,
+    "",
+    "Started: 2026-04-28T00:00:00.000Z",
+    "Snapshot state: new",
+    "Drift summary: 1 added (whole spec)",
+    "",
+    "## AC-1 (added): something",
+    "",
+    "Approach: test",
+    "",
+    "Files:",
+    "- foo.ts",
+    "",
+    "## Verification",
+    "",
+    ...commands.map((c) => `- \`${c}\``),
+    "",
+  ];
+  writePlan(root, featId, lines.join("\n"));
+}
+
+Deno.test("FEAT-0012/AC-1: verify with passing commands returns passed and exits zero", () => {
+  withGitProject((root) => {
+    writeVerifyPlan(root, "FEAT-0042", ["true", "echo ok"]);
+
+    const result = verifyCommand(root, "FEAT-0042");
+    assertEquals(result.outcome, "passed");
+    assertStringIncludes(result.message, "passed");
+    assert(result.verificationResult?.passed);
+    assertEquals(result.verificationResult?.results.length, 2);
+  });
+});
+
+Deno.test("FEAT-0012/AC-2: verify stops on first non-zero exit and surfaces details", () => {
+  withGitProject((root) => {
+    writeVerifyPlan(root, "FEAT-0042", [
+      "echo first-ok",
+      "sh -c 'echo fail-out >&2; exit 7'",
+      "echo should-not-run",
+    ]);
+
+    const result = verifyCommand(root, "FEAT-0042");
+    assertEquals(result.outcome, "command-failed");
+    assertEquals(result.verificationResult?.results.length, 2);
+    assertEquals(result.verificationResult?.results[1].exitCode, 7);
+
+    const lines = formatVerifyResult(result);
+    const joined = lines.join("\n");
+    assertStringIncludes(joined, "exit code: 7");
+    assertStringIncludes(joined, "fail-out");
+    assertStringIncludes(joined, "error:");
+  });
+});
+
+Deno.test("FEAT-0012/AC-3: verify fails with dirty-tree when a command leaves uncommitted files", () => {
+  withGitProject((root) => {
+    writeVerifyPlan(root, "FEAT-0042", [
+      "echo 'leak' > untracked.txt",
+    ]);
+
+    const result = verifyCommand(root, "FEAT-0042");
+    assertEquals(result.outcome, "dirty-tree");
+    assert(result.verificationResult?.dirtyPaths !== undefined);
+    assert(result.verificationResult!.dirtyPaths!.length > 0);
+
+    const lines = formatVerifyResult(result);
+    assertStringIncludes(lines.join("\n"), "dirty paths:");
+
+    // Cleanup
+    try { Deno.removeSync(path.join(root, "untracked.txt")); } catch { /* ok */ }
+  });
+});
+
+Deno.test("FEAT-0012/AC-4: verify fails when no plan file exists, naming the path", () => {
+  withGitProject((root) => {
+    const result = verifyCommand(root, "FEAT-9999");
+    assertEquals(result.outcome, "no-plan");
+    assertStringIncludes(result.message, ".specman/plans/FEAT-9999.md");
+  });
+});
+
+Deno.test("FEAT-0012/AC-5: verify fails when ## Verification has no runnable commands", () => {
+  withGitProject((root) => {
+    // Plan with empty Verification section (commentary-only)
+    const planContent = [
+      "# Sync plan — FEAT-0042 Test",
+      "",
+      "Started: 2026-04-28T00:00:00.000Z",
+      "Snapshot state: new",
+      "Drift summary: 1 added (whole spec)",
+      "",
+      "## AC-1 (added): something",
+      "",
+      "Approach: test",
+      "",
+      "Files:",
+      "- foo.ts",
+      "",
+      "## Verification",
+      "",
+      "<!-- agent fills in -->",
+      "",
+    ].join("\n");
+    writePlan(root, "FEAT-0042", planContent);
+
+    const result = verifyCommand(root, "FEAT-0042");
+    assertEquals(result.outcome, "empty-verification");
+    assertStringIncludes(result.message, "zero runnable commands");
+  });
+});
+
+Deno.test("FEAT-0012/AC-6: --plan <path> reads from the alternate location", () => {
+  withGitProject((root) => {
+    const altDir = path.join(root, "drafts");
+    Deno.mkdirSync(altDir, { recursive: true });
+    const altPath = path.join(altDir, "my-plan.md");
+    Deno.writeTextFileSync(
+      altPath,
+      [
+        "# Sync plan — FEAT-0042 Alt",
+        "",
+        "Started: 2026-04-28T00:00:00.000Z",
+        "Snapshot state: new",
+        "Drift summary: 1 added (whole spec)",
+        "",
+        "## AC-1 (added): something",
+        "",
+        "Approach: test",
+        "",
+        "Files:",
+        "- foo.ts",
+        "",
+        "## Verification",
+        "",
+        "- `echo from-alt-plan`",
+        "",
+      ].join("\n"),
+    );
+
+    // Default location does NOT exist.
+    assert(!planExists(root, "FEAT-0042"));
+
+    // Relative path
+    const relResult = verifyCommand(root, "FEAT-0042", {
+      planPath: "drafts/my-plan.md",
+    });
+    assertEquals(relResult.outcome, "passed");
+
+    // Absolute path
+    const absResult = verifyCommand(root, "FEAT-0042", { planPath: altPath });
+    assertEquals(absResult.outcome, "passed");
+
+    // Cleanup
+    try { Deno.removeSync(altPath); Deno.removeSync(altDir); } catch { /* ok */ }
+  });
+});
+
+Deno.test("FEAT-0012/AC-7: verify is read-only — no snapshot, no commit, no plan mutation", () => {
+  withGitProject((root) => {
+    writeVerifyPlan(root, "FEAT-0042", ["true"]);
+    runGitCommand(root, ["add", "."]);
+    runGitCommand(root, ["commit", "-m", "add plan"]);
+
+    const headBefore = getHead(root)!;
+    const planBefore = readPlan(root, "FEAT-0042")!;
+
+    // Snapshot must not exist before
+    const snapshotPath = path.join(
+      root,
+      ".specman",
+      "implemented",
+      "FEAT-0042.md",
+    );
+    let existedBefore = true;
+    try { Deno.statSync(snapshotPath); } catch { existedBefore = false; }
+    assert(!existedBefore, "precondition: snapshot should not exist yet");
+
+    const result = verifyCommand(root, "FEAT-0042");
+    assertEquals(result.outcome, "passed");
+
+    // No new commit
+    assertEquals(getHead(root), headBefore);
+    // Plan file unchanged
+    assertEquals(readPlan(root, "FEAT-0042"), planBefore);
+    // No snapshot written
+    let existsAfter = true;
+    try { Deno.statSync(snapshotPath); } catch { existsAfter = false; }
+    assert(!existsAfter, "verify must not write a snapshot");
   });
 });

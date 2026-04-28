@@ -26,6 +26,8 @@ import {
   formatSealResult,
   dryRunReport,
   formatDryRunReport,
+  verifyCommand,
+  formatVerifyResult,
 } from "./src/sync.ts";
 import { detectDrift } from "./src/snapshot.ts";
 import { walkSpecFiles } from "./src/specs.ts";
@@ -62,6 +64,7 @@ Commands:
   validate    Validate specs and snapshots
   delete      Remove a spec and all its tracked artifacts
   sync        Sync drifted specs (generate plans, run verification)
+  verify      Run a plan's verification commands without sealing
   seal        Seal editorial changes (no AC drift)
   install     Install agent integrations (skill + slash commands)
   uninstall   Remove agent integrations
@@ -346,6 +349,60 @@ Options:
       Deno.exit(hasFailures ? 1 : 0);
     }
     break;
+  }
+
+  case "verify": {
+    const verifyArgs = args.slice(1);
+    if (verifyArgs.includes("--help") || verifyArgs.includes("-h")) {
+      console.log(`Usage: specman verify <FEAT-ID> [--plan <path>]
+
+Run a plan's verification commands without entering the sync loop.
+
+Reads commands from the plan's '## Verification' section, runs each
+sequentially via 'sh -c' from the repository root, and stops on the
+first failure. After each command, the working tree is checked for
+uncommitted changes.
+
+Does NOT write any snapshot or create any commit. Purely diagnostic.
+
+Options:
+  --plan <path>   Use a plan file at an arbitrary path instead of the
+                  default .specman/plans/<FEAT-ID>.md
+  --help          Show this help`);
+      Deno.exit(0);
+    }
+
+    const root = requireProjectRoot(Deno.cwd());
+
+    let verifyFeatId: string | undefined;
+    let verifyPlanPath: string | undefined;
+    for (let i = 0; i < verifyArgs.length; i++) {
+      if (verifyArgs[i] === "--plan" && i + 1 < verifyArgs.length) {
+        verifyPlanPath = verifyArgs[++i];
+      } else if (!verifyFeatId && !verifyArgs[i].startsWith("--")) {
+        verifyFeatId = verifyArgs[i];
+      }
+    }
+
+    if (!verifyFeatId) {
+      console.error(
+        "error: missing FEAT-ID. Usage: specman verify <FEAT-ID> [--plan <path>]",
+      );
+      Deno.exit(1);
+    }
+
+    const result = verifyCommand(root, verifyFeatId, {
+      planPath: verifyPlanPath,
+    });
+    const lines = formatVerifyResult(result);
+    for (const line of lines) {
+      if (line.startsWith("error:")) {
+        console.error(line);
+      } else {
+        console.log(line);
+      }
+    }
+    Deno.exit(result.outcome === "passed" ? 0 : 1);
   }
 
   case "seal": {

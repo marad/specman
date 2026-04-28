@@ -31,6 +31,7 @@ import {
   planHasUncommittedChanges,
   parsePlan,
   isParsedPlan,
+  checkVerificationNonEmpty,
   formatDriftSummary,
   type DriftEntry,
 } from "./plan.ts";
@@ -93,6 +94,22 @@ export interface SyncAllResult {
 export interface SealResult {
   outcome: "sealed" | "error";
   message: string;
+}
+
+/** Result of standalone verify command */
+export interface VerifyCommandResult {
+  outcome:
+    | "passed"
+    | "command-failed"
+    | "dirty-tree"
+    | "no-plan"
+    | "empty-verification"
+    | "parse-error";
+  message: string;
+  /** The plan path that was used (resolved, relative to root when possible) */
+  planPath: string;
+  /** Populated on command-failed and dirty-tree outcomes */
+  verificationResult?: VerificationResult;
 }
 
 // ─── Working tree check ─────────────────────────────────────────────────────
@@ -301,13 +318,20 @@ export function deriveScope(
  *
  * Each command runs in the user's shell environment. A non-zero exit
  * code fails immediately. After each command, the working tree is
- * checked for cleanliness.
+ * checked for new uncommitted changes — pre-existing dirty paths
+ * (passed via `baselineDirty`) are ignored so callers like the
+ * standalone verify command can run with a dirty plan file.
  */
 export function runVerification(
   root: string,
   commands: string[],
+  opts?: { baselineDirty?: Iterable<string> },
 ): VerificationResult {
   const results: VerificationCommandResult[] = [];
+  const baseline = new Set<string>();
+  for (const p of opts?.baselineDirty ?? []) {
+    baseline.add(p.replace(/\\/g, "/"));
+  }
 
   for (const command of commands) {
     // Run the command via shell
@@ -323,13 +347,16 @@ export function runVerification(
       };
     }
 
-    // Check for dirty working tree (AC-12)
-    const dirty = getDirtyPaths(root);
-    if (dirty.length > 0) {
+    // Check for dirty working tree (AC-12) — only new paths beyond baseline.
+    const dirtyNow = getDirtyPaths(root);
+    const newDirty = dirtyNow.filter(
+      (p) => !baseline.has(p.replace(/\\/g, "/")),
+    );
+    if (newDirty.length > 0) {
       return {
         passed: false,
         results,
-        dirtyPaths: dirty,
+        dirtyPaths: newDirty,
         failureReason: `verification command left uncommitted changes: ${command}`,
       };
     }
@@ -933,6 +960,141 @@ export function seal(
     outcome: "sealed",
     message: `${featId}: sealed (editorial change, snapshot updated).`,
   };
+}
+
+// ─── Verify command (standalone) ────────────────────────────────────────────
+
+/**
+ * Run a plan's verification commands without entering the sync loop.
+ *
+ * Read-only with respect to specman state: never writes a snapshot,
+ * creates a commit, or modifies the plan file. Side effects from the
+ * verification commands themselves are detected by the dirty-tree
+ * post-check inside `runVerification`.
+ */
+export function verifyCommand(
+  root: string,
+  featId: string,
+  opts?: { planPath?: string },
+): VerifyCommandResult {
+  // AC-6: --plan overrides the default location.
+  // Relative paths resolve from cwd (where the user invoked the command);
+  // the CLI passes them through unchanged.
+  const defaultRelPath = path.join(".specman", "plans", `${featId}.md`);
+  const planPathRaw = opts?.planPath ?? defaultRelPath;
+  const planFullPath = path.isAbsolute(planPathRaw)
+    ? planPathRaw
+    : path.join(root, planPathRaw);
+
+  // AC-4: missing plan file → no-plan outcome naming the path.
+  let planContent: string;
+  try {
+    planContent = Deno.readTextFileSync(planFullPath);
+  } catch {
+    return {
+      outcome: "no-plan",
+      message: `no plan file found at ${planPathRaw}`,
+      planPath: planPathRaw,
+    };
+  }
+
+  const parsed = parsePlan(planContent);
+  if (!isParsedPlan(parsed)) {
+    return {
+      outcome: "parse-error",
+      message: `failed to parse plan: ${parsed.reason}`,
+      planPath: planPathRaw,
+    };
+  }
+
+  // AC-5: empty verification section → empty-verification outcome.
+  const emptyError = checkVerificationNonEmpty(parsed);
+  if (emptyError !== null) {
+    return {
+      outcome: "empty-verification",
+      message: emptyError,
+      planPath: planPathRaw,
+    };
+  }
+
+  // AC-1, AC-2, AC-3: delegate to runVerification.
+  // Baseline pre-existing dirty paths so verify only flags side effects of
+  // the verification commands themselves — the plan file or unrelated
+  // uncommitted work in the tree is allowed.
+  const baselineDirty = getDirtyPaths(root);
+  const verificationResult = runVerification(root, parsed.verificationCommands, {
+    baselineDirty,
+  });
+
+  if (verificationResult.passed) {
+    return {
+      outcome: "passed",
+      message:
+        `All verification commands passed (${parsed.verificationCommands.length}). Tree is clean.`,
+      planPath: planPathRaw,
+      verificationResult,
+    };
+  }
+
+  if (verificationResult.dirtyPaths !== undefined) {
+    return {
+      outcome: "dirty-tree",
+      message: verificationResult.failureReason ??
+        "verification command left uncommitted changes",
+      planPath: planPathRaw,
+      verificationResult,
+    };
+  }
+
+  return {
+    outcome: "command-failed",
+    message: verificationResult.failureReason ??
+      "verification command failed",
+    planPath: planPathRaw,
+    verificationResult,
+  };
+}
+
+/** Format a verify-command result for CLI output. */
+export function formatVerifyResult(result: VerifyCommandResult): string[] {
+  const lines: string[] = [];
+
+  switch (result.outcome) {
+    case "passed":
+      lines.push(result.message);
+      break;
+    case "command-failed":
+    case "dirty-tree":
+      lines.push(`error: ${result.message}`);
+      if (result.verificationResult) {
+        const vr = result.verificationResult;
+        const last = vr.results[vr.results.length - 1];
+        if (last) {
+          lines.push(`  command: ${last.command}`);
+          lines.push(`  exit code: ${last.exitCode}`);
+          if (last.stdout.trim()) {
+            lines.push(`  stdout: ${last.stdout.trim()}`);
+          }
+          if (last.stderr.trim()) {
+            lines.push(`  stderr: ${last.stderr.trim()}`);
+          }
+        }
+        if (vr.dirtyPaths) {
+          lines.push(`  dirty paths:`);
+          for (const p of vr.dirtyPaths) {
+            lines.push(`    ${p}`);
+          }
+        }
+      }
+      break;
+    case "no-plan":
+    case "empty-verification":
+    case "parse-error":
+      lines.push(`error: ${result.message}`);
+      break;
+  }
+
+  return lines;
 }
 
 // ─── CLI formatting helpers ─────────────────────────────────────────────────
