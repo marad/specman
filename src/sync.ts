@@ -841,8 +841,11 @@ export function seal(
       };
     }
 
-    // AC-20 (parity): refuse if working tree is dirty
-    const dirtyPaths = checkWorkingTree(root, []);
+    // AC-20 (parity): refuse if working tree is dirty.
+    // Allow the spec's plan file — writeSnapshotCommit stages it alongside
+    // the snapshot, mirroring the sync seal commit (AC-3).
+    const planRelPath = path.join(".specman", "plans", `${featId}.md`);
+    const dirtyPaths = checkWorkingTree(root, [planRelPath]);
     if (dirtyPaths !== null) {
       return {
         outcome: "error",

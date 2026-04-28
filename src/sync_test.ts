@@ -909,6 +909,33 @@ Deno.test("AC-23: seal --initial refuses when spec is drifted", () => {
   });
 });
 
+Deno.test("AC-22: seal --initial allows uncommitted plan file (commits both)", () => {
+  withGitProject((root) => {
+    const relPath = createSpec(root, "FEAT-0042", "Feature", [
+      { id: "AC-1", text: "Test" },
+    ]);
+    runGitCommand(root, ["add", "."]);
+    runGitCommand(root, ["commit", "-m", "add spec"]);
+
+    // Generate a plan but leave it uncommitted (mirrors a real bootstrap flow
+    // where sync was run, the agent worked, and seal --initial concludes it)
+    writePlan(root, "FEAT-0042", "# Sync plan — FEAT-0042\n\n## Verification\n\n- echo ok\n");
+
+    const result = seal(root, "FEAT-0042", { initial: true });
+    assertEquals(result.outcome, "sealed");
+
+    // Both snapshot and plan should be committed
+    const log = runGitCommand(root, ["log", "--oneline", "-1"]);
+    assertStringIncludes(log.stdout, "[specman] seal FEAT-0042");
+
+    const filesInCommit = runGitCommand(root, [
+      "show", "--name-only", "--pretty=format:", "HEAD",
+    ]);
+    assertStringIncludes(filesInCommit.stdout, ".specman/implemented/FEAT-0042.md");
+    assertStringIncludes(filesInCommit.stdout, ".specman/plans/FEAT-0042.md");
+  });
+});
+
 Deno.test("AC-22: seal --initial refuses with dirty working tree", () => {
   withGitProject((root) => {
     createSpec(root, "FEAT-0042", "New feature", [
