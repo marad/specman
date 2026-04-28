@@ -31,6 +31,7 @@ import {
   planHasUncommittedChanges,
   parsePlan,
   isParsedPlan,
+  formatDriftSummary,
   type DriftEntry,
 } from "./plan.ts";
 import { walkSpecFiles } from "./specs.ts";
@@ -708,6 +709,95 @@ export function syncAll(root: string): SyncAllResult {
   }
 
   return { results, skipped };
+}
+
+// ─── Dry run ────────────────────────────────────────────────────────────────
+
+/** A single entry in the dry-run report */
+export interface DryRunEntry {
+  featId: string;
+  status: "new" | "drifted";
+  /** Formatted drift summary, e.g. "3 added (whole spec)" or "1 added, 2 modified, 0 removed" */
+  summary: string;
+}
+
+/**
+ * Compute what `specman sync` would do, without writing any plan files.
+ *
+ * AC-24: lists each new/drifted spec with id, status, and drift counts.
+ * AC-25: when featId is given, restricts the report to that spec.
+ *
+ * In-sync specs are omitted. Order matches dependency order so the
+ * report mirrors the order a real sync would process them.
+ */
+export function dryRunReport(root: string, featId?: string): DryRunEntry[] {
+  const statusResult = getStatus(root);
+  const specFiles = walkSpecFiles(root);
+
+  const candidates = statusResult.entries.filter((e) => {
+    if (e.status === "in-sync") return false;
+    if (featId !== undefined && e.id !== featId) return false;
+    return true;
+  });
+
+  // Build SpecNodes for dependency ordering (matches syncAll behavior).
+  const nodes: SpecNode[] = [];
+  for (const entry of candidates) {
+    const specFile = specFiles.find((s) => s.id === entry.id);
+    if (!specFile) continue;
+
+    const specFullPath = path.join(root, entry.specPath);
+    let dependsOn: string[] = [];
+    try {
+      const bytes = Deno.readTextFileSync(specFullPath);
+      const parsed = parse(bytes, entry.specPath);
+      if (isParsedSpec(parsed) && Array.isArray(parsed.frontmatter.depends_on)) {
+        dependsOn = parsed.frontmatter.depends_on.filter(
+          (d): d is string => typeof d === "string",
+        );
+      }
+    } catch {
+      // ignore — drift summary will surface the parse failure
+    }
+
+    nodes.push({
+      id: entry.id,
+      relPath: entry.specPath,
+      status: entry.status,
+      dependsOn,
+    });
+  }
+
+  const sorted = topologicalSort(nodes);
+
+  const report: DryRunEntry[] = [];
+  for (const node of sorted) {
+    const driftState = node.status === "new" ? "new" : "drifted";
+    const driftResult = loadDriftSet(root, node.id, node.relPath, driftState);
+    if ("error" in driftResult) {
+      report.push({
+        featId: node.id,
+        status: node.status as "new" | "drifted",
+        summary: `error: ${driftResult.error}`,
+      });
+      continue;
+    }
+    report.push({
+      featId: node.id,
+      status: node.status as "new" | "drifted",
+      summary: formatDriftSummary(driftResult.driftSet, driftState),
+    });
+  }
+
+  return report;
+}
+
+/** Format a dry-run report for CLI output — one line per spec. */
+export function formatDryRunReport(entries: DryRunEntry[]): string[] {
+  if (entries.length === 0) {
+    return ["All specs are in-sync — nothing to sync."];
+  }
+  return entries.map((e) => `${e.featId} ${e.status}: ${e.summary}`);
 }
 
 // ─── Seal ───────────────────────────────────────────────────────────────────

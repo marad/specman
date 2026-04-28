@@ -30,6 +30,8 @@ import {
   formatSyncResult,
   formatSyncAllResult,
   formatSealResult,
+  dryRunReport,
+  formatDryRunReport,
   type SyncOneResult,
 } from "../src/sync.ts";
 import {
@@ -929,5 +931,118 @@ Deno.test("AC-22: seal --initial refuses with dirty working tree", () => {
     assertEquals(detectDrift(root, "FEAT-0042", relPath), "new");
 
     Deno.removeSync(path.join(root, "dirty.txt"));
+  });
+});
+
+// ─── AC-24, AC-25: sync --dry-run ──────────────────────────────────────────
+
+Deno.test("AC-24: dry run lists new specs with drift counts", () => {
+  withGitProject((root) => {
+    createSpec(root, "FEAT-0042", "First", [
+      { id: "AC-1", text: "One" },
+      { id: "AC-2", text: "Two" },
+    ]);
+    createSpec(root, "FEAT-0043", "Second", [
+      { id: "AC-1", text: "Alpha" },
+    ]);
+    runGitCommand(root, ["add", "."]);
+    runGitCommand(root, ["commit", "-m", "add specs"]);
+
+    const report = dryRunReport(root);
+    assertEquals(report.length, 2);
+
+    const e42 = report.find((r) => r.featId === "FEAT-0042");
+    const e43 = report.find((r) => r.featId === "FEAT-0043");
+    assert(e42 !== undefined);
+    assert(e43 !== undefined);
+    assertEquals(e42!.status, "new");
+    assertEquals(e43!.status, "new");
+    assertStringIncludes(e42!.summary, "2 added");
+    assertStringIncludes(e43!.summary, "1 added");
+  });
+});
+
+Deno.test("AC-24: dry run lists drifted specs separately from new", () => {
+  withGitProject((root) => {
+    const drifted = createSyncedSpec(root, "FEAT-0042", "Synced", [
+      { id: "AC-1", text: "Original" },
+      { id: "AC-2", text: "Stable" },
+    ]);
+    driftSpec(root, drifted, "Original", "Updated");
+    createSpec(root, "FEAT-0043", "Brand new", [
+      { id: "AC-1", text: "New AC" },
+    ]);
+    runGitCommand(root, ["add", "."]);
+    runGitCommand(root, ["commit", "-m", "drift one, add one"]);
+
+    const report = dryRunReport(root);
+    assertEquals(report.length, 2);
+
+    const e42 = report.find((r) => r.featId === "FEAT-0042")!;
+    const e43 = report.find((r) => r.featId === "FEAT-0043")!;
+    assertEquals(e42.status, "drifted");
+    assertEquals(e43.status, "new");
+    assertStringIncludes(e42.summary, "1 modified");
+    assertStringIncludes(e43.summary, "1 added");
+  });
+});
+
+Deno.test("AC-24: dry run skips in-sync specs and writes no plan files", () => {
+  withGitProject((root) => {
+    createSyncedSpec(root, "FEAT-0042", "Synced", [
+      { id: "AC-1", text: "Test" },
+    ]);
+    createSpec(root, "FEAT-0043", "Drifted", [
+      { id: "AC-1", text: "AC" },
+    ]);
+    runGitCommand(root, ["add", "."]);
+    runGitCommand(root, ["commit", "-m", "add"]);
+
+    const report = dryRunReport(root);
+    assertEquals(report.length, 1);
+    assertEquals(report[0].featId, "FEAT-0043");
+
+    // No plan files written
+    assertEquals(planExists(root, "FEAT-0042"), false);
+    assertEquals(planExists(root, "FEAT-0043"), false);
+  });
+});
+
+Deno.test("AC-24: dry run formats output as one line per spec", () => {
+  withGitProject((root) => {
+    createSpec(root, "FEAT-0042", "Feature", [
+      { id: "AC-1", text: "One" },
+    ]);
+    runGitCommand(root, ["add", "."]);
+    runGitCommand(root, ["commit", "-m", "add"]);
+
+    const report = dryRunReport(root);
+    const lines = formatDryRunReport(report);
+    assertEquals(lines.length, 1);
+    assertStringIncludes(lines[0], "FEAT-0042");
+    assertStringIncludes(lines[0], "new");
+    assertStringIncludes(lines[0], "1 added");
+  });
+});
+
+Deno.test("AC-25: dry run with FEAT-ID filters to that spec only", () => {
+  withGitProject((root) => {
+    createSpec(root, "FEAT-0042", "First", [{ id: "AC-1", text: "A" }]);
+    createSpec(root, "FEAT-0043", "Second", [{ id: "AC-1", text: "B" }]);
+    runGitCommand(root, ["add", "."]);
+    runGitCommand(root, ["commit", "-m", "add"]);
+
+    const report = dryRunReport(root, "FEAT-0043");
+    assertEquals(report.length, 1);
+    assertEquals(report[0].featId, "FEAT-0043");
+  });
+});
+
+Deno.test("AC-25: dry run with in-sync FEAT-ID returns empty list", () => {
+  withGitProject((root) => {
+    createSyncedSpec(root, "FEAT-0042", "Synced", [{ id: "AC-1", text: "T" }]);
+
+    const report = dryRunReport(root, "FEAT-0042");
+    assertEquals(report.length, 0);
   });
 });

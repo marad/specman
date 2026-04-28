@@ -24,6 +24,8 @@ import {
   formatSyncResult,
   formatSyncAllResult,
   formatSealResult,
+  dryRunReport,
+  formatDryRunReport,
 } from "./src/sync.ts";
 import { detectDrift } from "./src/snapshot.ts";
 import { walkSpecFiles } from "./src/specs.ts";
@@ -236,7 +238,7 @@ Options:
     // Handle --help before requiring project root
     const syncArgs = args.slice(1);
     if (syncArgs.includes("--help") || syncArgs.includes("-h")) {
-      console.log(`Usage: specman sync [FEAT-ID]
+      console.log(`Usage: specman sync [FEAT-ID] [--dry-run]
 
 Sync drifted specs by generating implementation plans.
 
@@ -244,13 +246,26 @@ With FEAT-ID: sync a single spec.
 Without: sync all drifted/new specs in dependency order.
 
 Options:
-  --help   Show this help`);
+  --dry-run   List specs that would be synced with their drift counts.
+              Writes no plan files. Read-only.
+  --help      Show this help`);
       Deno.exit(0);
     }
 
     const root = requireProjectRoot(Deno.cwd());
 
+    const dryRun = syncArgs.includes("--dry-run");
     const featId = syncArgs.find((a) => a.startsWith("FEAT-"));
+
+    if (dryRun) {
+      // AC-24, AC-25: read-only report, no plan files written
+      const report = dryRunReport(root, featId);
+      const lines = formatDryRunReport(report);
+      for (const line of lines) {
+        console.log(line);
+      }
+      Deno.exit(0);
+    }
 
     if (featId) {
       // Single spec sync (AC-14)
