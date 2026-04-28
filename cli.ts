@@ -322,28 +322,34 @@ Options:
   case "seal": {
     // Handle --help before requiring project root
     if (args.slice(1).includes("--help") || args.slice(1).includes("-h")) {
-      console.log(`Usage: specman seal <FEAT-ID>
+      console.log(`Usage: specman seal <FEAT-ID> [--initial]
 
-Seal editorial changes to a drifted spec without running the agent.
-Updates the snapshot and creates a single commit.
+Seal a snapshot.
 
-Requires:
-  - Spec must be 'drifted' (not 'new' or 'in-sync')
-  - No acceptance criteria may have changed
-  - Clean working tree`);
+Without --initial: updates the snapshot for a drifted spec without running
+the agent. Requires the spec to be 'drifted' (not 'new' or 'in-sync'),
+no acceptance criteria changes, and a clean working tree.
+
+With --initial: creates the first snapshot for a 'new' spec whose
+implementation was done outside of SpecMan (manual coding, migration
+from another workflow, or initial project setup). Requires the spec to
+be 'new' (no existing snapshot) and a clean working tree.
+
+In both cases, a single commit is created updating the snapshot file.`);
       Deno.exit(0);
     }
 
     const root = requireProjectRoot(Deno.cwd());
     const sealArgs = args.slice(1);
+    const sealInitial = sealArgs.includes("--initial");
     const sealFeatId = sealArgs.find((a) => a.startsWith("FEAT-"));
 
     if (!sealFeatId) {
-      console.error("error: missing FEAT-ID. Usage: specman seal <FEAT-ID>");
+      console.error("error: missing FEAT-ID. Usage: specman seal <FEAT-ID> [--initial]");
       Deno.exit(1);
     }
 
-    const result = seal(root, sealFeatId);
+    const result = seal(root, sealFeatId, { initial: sealInitial });
     const lines = formatSealResult(result);
     for (const line of lines) {
       if (line.startsWith("error:")) {

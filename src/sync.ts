@@ -720,7 +720,13 @@ export function syncAll(root: string): SyncAllResult {
  * AC-18: Refuses if spec is new or in-sync.
  * AC-20: Refuses if working tree is dirty.
  */
-export function seal(root: string, featId: string): SealResult {
+export function seal(
+  root: string,
+  featId: string,
+  opts?: { initial?: boolean },
+): SealResult {
+  const initial = opts?.initial === true;
+
   // Find the spec file
   const specFiles = walkSpecFiles(root);
   const specEntry = specFiles.find((s) => s.id === featId);
@@ -734,11 +740,52 @@ export function seal(root: string, featId: string): SealResult {
   // Check drift status
   const status = detectDrift(root, featId, specEntry.relPath);
 
-  // AC-18: refuse if new or in-sync
+  if (initial) {
+    // AC-23: --initial only valid for new specs
+    if (status !== "new") {
+      return {
+        outcome: "error",
+        message:
+          `--initial is only for specs with no snapshot; ${featId} is currently ${status}. ` +
+          `Use 'specman seal ${featId}' for editorial changes or 'specman sync ${featId}' for AC drift.`,
+      };
+    }
+
+    // AC-20 (parity): refuse if working tree is dirty
+    const dirtyPaths = checkWorkingTree(root, []);
+    if (dirtyPaths !== null) {
+      return {
+        outcome: "error",
+        message:
+          `working tree has uncommitted changes:\n` +
+          dirtyPaths.map((p) => `  ${p}`).join("\n") +
+          `\nCommit or stash changes before running seal.`,
+      };
+    }
+
+    // AC-22: write snapshot and commit
+    const commitResult = writeSnapshotCommit(root, featId, specEntry.relPath);
+    if (!commitResult.success) {
+      return {
+        outcome: "error",
+        message: `${featId}: failed to create snapshot commit: ${commitResult.error}`,
+      };
+    }
+
+    return {
+      outcome: "sealed",
+      message: `${featId}: sealed (initial snapshot created).`,
+    };
+  }
+
+  // AC-18: refuse if new or in-sync (no --initial)
   if (status === "new") {
     return {
       outcome: "error",
-      message: `${featId} has no snapshot (status: new). Use 'specman sync ${featId}' for initial implementation.`,
+      message:
+        `${featId} has no snapshot (status: new). ` +
+        `Use 'specman sync ${featId}' for initial implementation, ` +
+        `or 'specman seal --initial ${featId}' if the implementation already exists.`,
     };
   }
 

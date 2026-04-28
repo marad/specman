@@ -462,7 +462,7 @@ Deno.test("AC-17: seal refuses when ACs changed", () => {
   });
 });
 
-Deno.test("AC-18: seal refuses for new spec (no snapshot)", () => {
+Deno.test("AC-18: seal refuses for new spec (no snapshot) and mentions both sync and --initial", () => {
   withGitProject((root) => {
     createSpec(root, "FEAT-0042", "New feature", [
       { id: "AC-1", text: "Test" },
@@ -474,6 +474,7 @@ Deno.test("AC-18: seal refuses for new spec (no snapshot)", () => {
     assertEquals(result.outcome, "error");
     assertStringIncludes(result.message, "new");
     assertStringIncludes(result.message, "specman sync");
+    assertStringIncludes(result.message, "specman seal --initial");
   });
 });
 
@@ -846,5 +847,87 @@ Deno.test("AC-17: seal refuses when AC is removed", () => {
     assertEquals(result.outcome, "error");
     assertStringIncludes(result.message, "AC-level drift");
     assertStringIncludes(result.message, "AC-2 removed");
+  });
+});
+
+// ─── AC-22, AC-23: seal --initial ──────────────────────────────────────────
+
+Deno.test("AC-22: seal --initial creates snapshot for new spec and transitions to in-sync", () => {
+  withGitProject((root) => {
+    const relPath = createSpec(root, "FEAT-0042", "New feature", [
+      { id: "AC-1", text: "First" },
+      { id: "AC-2", text: "Second" },
+    ]);
+    runGitCommand(root, ["add", "."]);
+    runGitCommand(root, ["commit", "-m", "add spec"]);
+
+    assertEquals(detectDrift(root, "FEAT-0042", relPath), "new");
+
+    const result = seal(root, "FEAT-0042", { initial: true });
+    assertEquals(result.outcome, "sealed");
+    assertStringIncludes(result.message, "initial snapshot");
+
+    // Snapshot was written
+    assertEquals(detectDrift(root, "FEAT-0042", relPath), "in-sync");
+
+    // A single commit was created
+    const log = runGitCommand(root, ["log", "--oneline", "-1"]);
+    assertStringIncludes(log.stdout, "[specman] seal FEAT-0042");
+  });
+});
+
+Deno.test("AC-23: seal --initial refuses when spec already has snapshot (in-sync)", () => {
+  withGitProject((root) => {
+    createSyncedSpec(root, "FEAT-0042", "Feature", [
+      { id: "AC-1", text: "Test" },
+    ]);
+
+    const result = seal(root, "FEAT-0042", { initial: true });
+    assertEquals(result.outcome, "error");
+    assertStringIncludes(result.message, "--initial is only for specs with no snapshot");
+    assertStringIncludes(result.message, "in-sync");
+  });
+});
+
+Deno.test("AC-23: seal --initial refuses when spec is drifted", () => {
+  withGitProject((root) => {
+    const relPath = createSyncedSpec(root, "FEAT-0042", "Feature", [
+      { id: "AC-1", text: "First" },
+    ]);
+
+    // Drift it
+    driftSpec(root, relPath, "First", "Updated");
+    runGitCommand(root, ["add", "."]);
+    runGitCommand(root, ["commit", "-m", "drift"]);
+
+    const result = seal(root, "FEAT-0042", { initial: true });
+    assertEquals(result.outcome, "error");
+    assertStringIncludes(result.message, "--initial is only for specs with no snapshot");
+    assertStringIncludes(result.message, "drifted");
+  });
+});
+
+Deno.test("AC-22: seal --initial refuses with dirty working tree", () => {
+  withGitProject((root) => {
+    createSpec(root, "FEAT-0042", "New feature", [
+      { id: "AC-1", text: "Test" },
+    ]);
+    runGitCommand(root, ["add", "."]);
+    runGitCommand(root, ["commit", "-m", "add spec"]);
+
+    // Create dirty file
+    Deno.writeTextFileSync(path.join(root, "dirty.txt"), "dirty");
+
+    const result = seal(root, "FEAT-0042", { initial: true });
+    assertEquals(result.outcome, "error");
+    assertStringIncludes(result.message, "uncommitted changes");
+    assertStringIncludes(result.message, "dirty.txt");
+
+    // Snapshot was NOT written
+    const fullPath = path.join(root, "specs", "FEAT-0042-new-feature.md");
+    const relPath = path.relative(root, fullPath);
+    assertEquals(detectDrift(root, "FEAT-0042", relPath), "new");
+
+    Deno.removeSync(path.join(root, "dirty.txt"));
   });
 });
