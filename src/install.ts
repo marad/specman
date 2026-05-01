@@ -253,42 +253,119 @@ export function uninstallAgents(
 
 // ── Interactive selection ───────────────────────────────────────────────────
 
+export type Key = "up" | "down" | "space" | "enter" | "cancel";
+
 /**
- * Ask the user to select agents from a numbered list. Toggle by typing
- * the agent's number; confirm with empty input. Returns the selection
- * in canonical order (input order, filtered to those checked).
+ * Ask the user to select agents using arrow keys (navigate), space
+ * (toggle), and enter (confirm). Cancel (Ctrl+C / Ctrl+D) returns an
+ * empty selection. Returns the selection in canonical order.
  *
- * Default: all agents checked. Tested separately via injected I/O.
+ * Default: all agents checked, cursor on the first row. Tested via
+ * injected `readKey` and `write` so tests don't need a real terminal.
  */
 export function interactiveSelect(
   agents: AgentId[],
-  read: () => string | null = () => prompt(""),
-  write: (s: string) => void = (s) => console.log(s),
+  readKey: () => Key | null = defaultReadKey,
+  write: (s: string) => void = (s) => Deno.stdout.writeSync(
+    new TextEncoder().encode(s),
+  ),
 ): AgentId[] {
   const selected = new Set<AgentId>(agents);
+  let cursor = 0;
+  let firstRender = true;
 
-  while (true) {
-    write("");
-    write("Select agents to install:");
-    agents.forEach((id, i) => {
-      const mark = selected.has(id) ? "x" : " ";
-      write(`  ${i + 1}. [${mark}] ${id}`);
-    });
-    write("Type a number to toggle, or press Enter to confirm.");
-
-    const input = (read() ?? "").trim();
-    if (input === "") break;
-
-    const n = parseInt(input, 10);
-    if (!isNaN(n) && n >= 1 && n <= agents.length) {
-      const id = agents[n - 1];
-      if (selected.has(id)) selected.delete(id);
-      else selected.add(id);
+  const render = () => {
+    if (!firstRender) {
+      // Move cursor up over the previously rendered block (header +
+      // one line per agent + footer) and clear each line.
+      const lines = agents.length + 2;
+      for (let i = 0; i < lines; i++) {
+        write("\x1b[1A\x1b[2K");
+      }
     }
-    // Invalid input: silently re-prompt. The list re-renders next iteration.
+    firstRender = false;
+    write("Select agents to install:\n");
+    agents.forEach((id, i) => {
+      const pointer = i === cursor ? ">" : " ";
+      const mark = selected.has(id) ? "x" : " ";
+      write(`${pointer} [${mark}] ${id}\n`);
+    });
+    write("(arrow keys to move, space to toggle, enter to confirm)\n");
+  };
+
+  try {
+    while (true) {
+      render();
+      const key = readKey();
+      if (key === null || key === "cancel") {
+        return [];
+      }
+      if (key === "enter") break;
+      if (key === "up") {
+        cursor = (cursor - 1 + agents.length) % agents.length;
+      } else if (key === "down") {
+        cursor = (cursor + 1) % agents.length;
+      } else if (key === "space") {
+        const id = agents[cursor];
+        if (selected.has(id)) selected.delete(id);
+        else selected.add(id);
+      }
+    }
+  } finally {
+    // Render once more so the final state is visible after exit, and
+    // ensure any raw-mode stdin state is released by the default reader.
+    defaultReadKeyCleanup();
   }
 
   return agents.filter((id) => selected.has(id));
+}
+
+let rawModeActive = false;
+
+function defaultReadKeyCleanup(): void {
+  if (rawModeActive) {
+    try {
+      Deno.stdin.setRaw(false);
+    } catch {
+      // ignore — stdin may not be a TTY in test contexts
+    }
+    rawModeActive = false;
+  }
+}
+
+function defaultReadKey(): Key | null {
+  if (!rawModeActive) {
+    try {
+      Deno.stdin.setRaw(true);
+      rawModeActive = true;
+    } catch {
+      // Not a TTY — caller shouldn't have invoked us, but degrade gracefully.
+      return null;
+    }
+  }
+
+  const buf = new Uint8Array(8);
+  const n = Deno.stdin.readSync(buf);
+  if (n === null || n === 0) return "cancel";
+  const b0 = buf[0];
+
+  // Ctrl+C (\x03), Ctrl+D (\x04), Esc alone (\x1b with no follow-up).
+  if (b0 === 0x03 || b0 === 0x04) return "cancel";
+  if (b0 === 0x0d || b0 === 0x0a) return "enter";
+  if (b0 === 0x20) return "space";
+
+  // CSI escape: ESC [ A/B/C/D
+  if (b0 === 0x1b && n >= 3 && buf[1] === 0x5b) {
+    const code = buf[2];
+    if (code === 0x41) return "up";
+    if (code === 0x42) return "down";
+    // Left/right ignored — not used by this UI.
+    return defaultReadKey();
+  }
+  if (b0 === 0x1b) return "cancel";
+
+  // Any other key: keep waiting for a meaningful one.
+  return defaultReadKey();
 }
 
 // ── Home directory ──────────────────────────────────────────────────────────

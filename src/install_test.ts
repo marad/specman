@@ -12,6 +12,7 @@ import {
   type AgentId,
   installAgents,
   interactiveSelect,
+  type Key,
   SUPPORTED_AGENT_IDS,
   type TemplateKind,
   uninstallAgents,
@@ -220,51 +221,66 @@ Deno.test("AC-15: partial install failure preserves earlier writes; no rollback"
 
 // ─── interactiveSelect ───────────────────────────────────────────────────────
 
-Deno.test("interactiveSelect: empty input confirms full default selection", () => {
-  let _line = 0;
-  const inputs: (string | null)[] = [""]; // immediate confirm
+function keySequence(keys: Key[]): () => Key | null {
   let i = 0;
+  return () => keys[i++] ?? null;
+}
+
+Deno.test("interactiveSelect: enter confirms full default selection", () => {
   const result = interactiveSelect(
     SUPPORTED_AGENT_IDS,
-    () => { return inputs[i++] ?? ""; },
-    (_s) => { _line++; },
+    keySequence(["enter"]),
+    (_s) => {},
   );
   assertEquals(result, SUPPORTED_AGENT_IDS);
 });
 
-Deno.test("interactiveSelect: numeric input toggles agent off", () => {
-  // Toggle off agent 1 (claude-code), then confirm
-  const inputs: (string | null)[] = ["1", ""];
-  let i = 0;
+Deno.test("interactiveSelect: space toggles the cursor's agent off", () => {
+  // Cursor starts at row 0 (claude-code); space toggles, enter confirms.
   const result = interactiveSelect(
     SUPPORTED_AGENT_IDS,
-    () => inputs[i++] ?? "",
+    keySequence(["space", "enter"]),
     (_s) => {},
   );
   assertEquals(result, ["opencode", "copilot-cli"]);
 });
 
-Deno.test("interactiveSelect: invalid input is silently ignored", () => {
-  const inputs: (string | null)[] = ["abc", "99", ""];
-  let i = 0;
+Deno.test("interactiveSelect: down arrow moves cursor before toggling", () => {
+  // Down once → cursor on opencode; space toggles it off; enter confirms.
   const result = interactiveSelect(
     SUPPORTED_AGENT_IDS,
-    () => inputs[i++] ?? "",
+    keySequence(["down", "space", "enter"]),
     (_s) => {},
   );
-  // Invalid inputs leave full default selection
-  assertEquals(result, SUPPORTED_AGENT_IDS);
+  assertEquals(result, ["claude-code", "copilot-cli"]);
+});
+
+Deno.test("interactiveSelect: up arrow wraps from first to last row", () => {
+  // Up from row 0 wraps to copilot-cli; toggle off; confirm.
+  const result = interactiveSelect(
+    SUPPORTED_AGENT_IDS,
+    keySequence(["up", "space", "enter"]),
+    (_s) => {},
+  );
+  assertEquals(result, ["claude-code", "opencode"]);
 });
 
 Deno.test("interactiveSelect: toggling same agent twice restores it", () => {
-  const inputs: (string | null)[] = ["2", "2", ""];
-  let i = 0;
   const result = interactiveSelect(
     SUPPORTED_AGENT_IDS,
-    () => inputs[i++] ?? "",
+    keySequence(["down", "space", "space", "enter"]),
     (_s) => {},
   );
   assertEquals(result, SUPPORTED_AGENT_IDS);
+});
+
+Deno.test("interactiveSelect: cancel returns empty selection", () => {
+  const result = interactiveSelect(
+    SUPPORTED_AGENT_IDS,
+    keySequence(["cancel"]),
+    (_s) => {},
+  );
+  assertEquals(result, []);
 });
 
 // ─── Path layout sanity ──────────────────────────────────────────────────────
