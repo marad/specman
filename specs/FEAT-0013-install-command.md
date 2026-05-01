@@ -171,7 +171,7 @@ Pass agent names explicitly, e.g. `specman install claude-code`.
 
 ## Acceptance criteria
 
-- AC-1: Given a TTY and no positional arguments, `specman install` presents an interactive checklist of every supported agent and installs the artifacts for each agent the user confirms.
+- AC-1: Given a TTY and no positional arguments, `specman install` presents an interactive checklist where the user navigates with arrow keys, toggles selection with space, and confirms with enter; install proceeds for the selected agents.
 - AC-2: Given one or more agent identifiers as positional arguments, `specman install <agent>...` skips the prompt entirely and installs the artifacts for exactly the named agents in the order given.
 - AC-3: Given no TTY and no positional agent arguments, `specman install` exits non-zero with an error directing the user to pass agent names explicitly, and writes nothing.
 - AC-4: Given `--list`, `specman install --list` prints each supported agent identifier on its own line, exits zero, and writes no files.
